@@ -11,10 +11,13 @@ router = Router()
 @router.message(Command("start"))
 async def cmd_start(message: Message, db: DB):
     """Приветствие, учёт пользователя и выбор тарифа при первом запуске."""
-    user = await db.ensure_user(message.from_user.id)
 
-    # Если пользователь новый (ещё не выбрал тариф)
-    if not user.get("plan"):
+    # Проверяем, существует ли пользователь
+    existing_user = await db.get_user(message.from_user.id)
+
+    # Если пользователь новый
+    if not existing_user:
+        await db.ensure_user(message.from_user.id)  # создаём
         await message.answer(
             text=(
                 "🔮 <b>Добро пожаловать в мир цен и скидок!</b>\n\n"
@@ -29,17 +32,16 @@ async def cmd_start(message: Message, db: DB):
             reply_markup=choose_plan_kb(),
             parse_mode="HTML",
         )
+        return
 
-    # Если у пользователя уже есть тариф →
-    # просто приветствуем и показываем меню
-    else:
-        plan = user.get("plan_name", "Ваш тариф не определён 🤔")
-        await message.answer(
-            text=(
-                f"👋 С возвращением, <b>{message.from_user.first_name}</b>!\n\n"
-                f"📦 Ваш текущий тариф: <b>{plan}</b>\n"
-                "Продолжайте отслеживать товары или добавьте новые 👇"
-            ),
-            reply_markup=main_inline_kb(),
-            parse_mode="HTML",
-        )
+    # Если пользователь уже есть в БД
+    plan = existing_user.get("plan_name", "Бесплатный")
+    await message.answer(
+        text=(
+            f"👋 С возвращением, <b>{message.from_user.first_name}</b>!\n\n"
+            f"📦 Ваш текущий тариф: <b>{plan}</b>\n"
+            "Продолжайте отслеживать товары или добавьте новые 👇"
+        ),
+        reply_markup=main_inline_kb(),
+        parse_mode="HTML",
+    )

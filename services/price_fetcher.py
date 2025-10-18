@@ -1,87 +1,123 @@
 import asyncio
 import logging
 import random
-import time
 from typing import Dict, Optional
-import requests
-
+import aiohttp
+from decimal import Decimal
 from constants import DEFAULT_DEST
-
 
 logger = logging.getLogger(__name__)
 
 
-def get_price_sync(
-        nm_id: int, dest: int | None = None, spp: int = 30
-) -> Dict[str, float | str]:
+class PriceFetchError(Exception):
+    """Ошибка при получении данных о товаре."""
+    pass
+
+
+async def get_product_data_async(
+    session: aiohttp.ClientSession,
+    nm_id: int,
+    dest: Optional[int] = None,
+) -> Dict:
+    """Получаем все данные о товаре: цены, остатки, размеры."""
     if dest is None:
         dest = DEFAULT_DEST
 
     url = (
-        "https://card.wb.ru/cards/v4/detail"
-        f"?appType=1&curr=rub&dest={dest}&spp={spp}&hide_dtype=11"
-        f"&ab_testing=false&lang=ru&nm={nm_id}"
+        f"https://u-card.wb.ru/cards/v4/detail?appType=1&curr=rub&dest={dest}"
+        f"&spp=30&hide_dtype=11&ab_testing=false&lang=ru&nm={nm_id}"
     )
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36",
+        "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
+        "Origin": "https://www.wildberries.ru",
+    }
 
     for attempt in range(3):
         try:
-            r = requests.get(url, timeout=(5, 10))
-            r.raise_for_status()
-            js = r.json()
-            products = js.get("products", [])
-            if not products:
-                raise ValueError(f"[nm={nm_id}] Пустой ответ от WB")
-
-            data = products[0]
-            p = data["sizes"][0]["price"]
-
-            return {
-                "basic": p["basic"] / 100.0,
-                "product": p["product"] / 100.0,
-                "name": data.get("name", f"Товар {nm_id}")
-            }
-
-        except (requests.exceptions.RequestException, ValueError) as e:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    raise PriceFetchError(f"HTTP {resp.status} для nm={nm_id}")
+                data = await resp.json()
+                products = data.get("products", [])
+                if not products:
+                    raise PriceFetchError(f"Пустой ответ для nm={nm_id}")
+                return products[0]  # возвращаем первый товар
+        except aiohttp.ClientError as e:
             if attempt < 2:
-                sleep_time = 2 ** attempt
-                logger.warning(
-                    f"[nm={nm_id}] Ошибка запроса ({e}), повтор через {sleep_time}s"
-                )
-                time.sleep(sleep_time)
+                sleep_time = 2 ** attempt + random.uniform(0, 1)
+                logger.warning(f"[nm={nm_id}] Ошибка запроса ({e}), повтор через {sleep_time:.1f}s")
+                await asyncio.sleep(sleep_time)
                 continue
-            raise
+            raise PriceFetchError(f"Не удалось получить данные после 3 попыток: {e}")
+        except (KeyError, IndexError, ValueError) as e:
+            raise PriceFetchError(f"Ошибка парсинга данных для nm={nm_id}: {e}")
 
 
 class PriceFetcher:
-    """
-    Асинхронный интерфейс для получения цены с rate limiting.
-    """
+    """Менеджер для получения цен и остатков с rate limiting."""
 
-    def __init__(self, concurrency: int = 10, delay_range=(0.2, 1.0)):
+    def __init__(self, concurrency: int = 10, delay_range=(0.3, 0.8)):
         self.semaphore = asyncio.Semaphore(concurrency)
         self.delay_range = delay_range
+        self._session: Optional[aiohttp.ClientSession] = None
 
-    async def get_price(
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self):
+        if self._session and not self._session.closed:
+            await self._session.close()
+
+    async def get_product_data(
         self, nm_id: int, dest: Optional[int] = None
-    ) -> Optional[Dict[str, float]]:
-        """
-        Асинхронное получение цены с контролем параллельности,
-        случайной паузой и защитой от зависаний.
-        """
+    ) -> Optional[Dict]:
+        """Получение цены, остатка и размеров одним запросом."""
         async with self.semaphore:
-            # случайная пауза, чтобы не “бомбить” WB
             await asyncio.sleep(random.uniform(*self.delay_range))
-
-            loop = asyncio.get_running_loop()
             try:
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(None, get_price_sync, nm_id, dest),
-                    timeout=15,  # общий лимит на всю операцию
-                )
+                session = await self._get_session()
+                data = await asyncio.wait_for(get_product_data_async(session, nm_id, dest), timeout=20)
+
+                # Подготавливаем удобный словарь
+                result = {
+                    "name": data.get("name", f"Товар {nm_id}"),
+                    "sizes": []
+                }
+
+                for s in data.get("sizes", []):
+                    size_info = {
+                        "name": s.get("name"),
+                        "origName": s.get("origName"),
+                        "price": {
+                            "basic": Decimal(str(s.get("price", {}).get("basic", 0))) / 100,
+                            "product": Decimal(str(s.get("price", {}).get("product", 0))) / 100,
+                        },
+                        "stocks": [{"qty": stock.get("qty", 0)} for stock in s.get("stocks", [])]
+                    }
+                    result["sizes"].append(size_info)
+
+                # Если товар без размеров, создаем виртуальный размер
+                if not result["sizes"]:
+                    price_data = data.get("price", {})
+                    stocks_data = data.get("stocks", [])
+                    result["price"] = {
+                        "basic": Decimal(str(price_data.get("basic", 0))) / 100,
+                        "product": Decimal(str(price_data.get("product", 0))) / 100
+                    }
+                    result["stocks"] = [{"qty": stock.get("qty", 0)} for stock in stocks_data]
+
                 return result
-            except asyncio.TimeoutError:
-                logger.error(f"[nm={nm_id}] Таймаут при получении цены")
-                return None
+
             except Exception as e:
-                logger.error(f"[nm={nm_id}] Ошибка в get_price: {e}")
+                logger.error(f"[nm={nm_id}] Ошибка при получении данных: {e}")
                 return None
+
+    async def get_products_batch(self, nm_ids: list[int], dest: Optional[int] = None) -> Dict[int, Optional[Dict]]:
+        tasks = [self.get_product_data(nm_id, dest) for nm_id in nm_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return {nm_id: res if not isinstance(res, Exception) else None for nm_id, res in zip(nm_ids, results)}

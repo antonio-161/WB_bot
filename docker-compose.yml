@@ -2,34 +2,86 @@ version: "3.9"
 
 services:
   bot:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: wb_price_bot
-    restart: always
+    restart: unless-stopped
     env_file: .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     volumes:
-      - .:/app
-    command: >
-      sh -c "
-      echo 'Waiting for DB...' &&
-      sleep 5 &&
-      python -m main
-      "
+      - ./logs:/app/logs
+    networks:
+      - bot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python -m main' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   db:
     image: postgres:16-alpine
     container_name: wb_postgres
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-botuser}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpass}
       POSTGRES_DB: ${POSTGRES_DB:-wb_bot}
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
-      - ./migrations/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - ./migrations/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backups:/backups
+    networks:
+      - bot_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-botuser} -d ${POSTGRES_DB:-wb_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+  # Опционально: pgAdmin для управления БД
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: wb_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - bot_network
+    profiles:
+      - dev
+    depends_on:
+      - db
+
+networks:
+  bot_network:
+    driver: bridge
 
 volumes:
   pg_data:
+    driver: local
+  pgadmin_data:
+    driver: local

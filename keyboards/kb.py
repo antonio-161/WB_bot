@@ -1,34 +1,51 @@
-from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    ReplyKeyboardMarkup
-)
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
-# 🔹 Главное меню (ReplyKeyboard)
 def main_inline_kb() -> InlineKeyboardMarkup:
     """Главное меню пользователя через InlineKeyboard."""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="➕ Добавить товар", callback_data="add_product"),
-                InlineKeyboardButton(text="📦 Мои товары", callback_data="list_products"),
+                InlineKeyboardButton(
+                    text="➕ Добавить товар",
+                    callback_data="add_product"
+                ),
             ],
             [
-                InlineKeyboardButton(text="💰 Установить скидку", callback_data="set_discount"),
-                InlineKeyboardButton(text="❌ Удалить товар", callback_data="remove_product"),
+                InlineKeyboardButton(
+                    text="📦 Мои товары",
+                    callback_data="list_products"
+                ),
+                InlineKeyboardButton(
+                    text="🗑 Удалить товар",
+                    callback_data="remove_product"
+                ),
             ],
             [
-                InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings"),
-                InlineKeyboardButton(text="💳 Мой тариф", callback_data="my_plan"),
+                InlineKeyboardButton(
+                    text="💳 Скидка кошелька",
+                    callback_data="set_discount"
+                ),
+                InlineKeyboardButton(
+                    text="📍 Мой ПВЗ",
+                    callback_data="show_pvz"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⚙️ Настройки",
+                    callback_data="settings"
+                ),
+                InlineKeyboardButton(
+                    text="💰 Мой тариф",
+                    callback_data="my_plan"
+                ),
             ],
         ]
     )
     return kb
 
 
-# 🔹 Выбор тарифа (InlineKeyboard)
 def choose_plan_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора тарифа."""
     kb = InlineKeyboardMarkup(
@@ -56,41 +73,89 @@ def choose_plan_kb() -> InlineKeyboardMarkup:
     return kb
 
 
-# 🔹 Список отслеживаемых товаров (InlineKeyboard)
 def products_inline(products: list[dict]) -> InlineKeyboardMarkup:
     """Клавиатура с отслеживаемыми товарами."""
     inline_rows = []
 
     for p in products:
+        name = p.get("name", f"Товар {p['nm_id']}")
+        # Обрезаем слишком длинные названия
+        display_name = name[:40] + "..." if len(name) > 40 else name
+
         inline_rows.append([
             InlineKeyboardButton(
-                text=f"🛍 {p['nm_id']}",
-                callback_data=f"product_{p['nm_id']}"
+                text=f"🛍 {display_name}",
+                url=f"https://www.wildberries.ru/catalog/{p['nm_id']}/detail.aspx"
             )
         ])
 
-    # Добавляем кнопку “Назад” или “Добавить товар”
+    # Кнопки действий
     inline_rows.append([
-        InlineKeyboardButton(text="➕ Добавить ещё", callback_data="add_product"),
+        InlineKeyboardButton(
+            text="➕ Добавить ещё",
+            callback_data="add_product"
+        ),
+    ])
+    inline_rows.append([
+        InlineKeyboardButton(
+            text="« Назад",
+            callback_data="back_to_menu"
+        ),
     ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=inline_rows)
     return kb
 
 
-# 🔹 Клавиатура подтверждения удаления
 def confirm_remove_kb(nm_id: int) -> InlineKeyboardMarkup:
     """Подтверждение удаления товара."""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Удалить", callback_data=f"confirm_remove_{nm_id}"
+                    text="✅ Да, удалить",
+                    callback_data=f"confirm_remove_{nm_id}"
                 ),
                 InlineKeyboardButton(
-                    text="❌ Отмена", callback_data="cancel_remove"
+                    text="❌ Отмена",
+                    callback_data="cancel_remove"
                 ),
             ]
+        ]
+    )
+    return kb
+
+
+def reset_pvz_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔄 Изменить ПВЗ",
+                    callback_data="set_pvz"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data="back_to_menu"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def sizes_inline_kb(nm: int, sizes: list[dict]) -> InlineKeyboardMarkup:
+    """
+    Генерация inline-клавиатуры с размерами товара.
+
+    sizes: [{'name': 'M', 'origName': 'M'}, ...]
+    """
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=s.get("name"), callback_data=f"select_size:{nm}:{s.get('name')}")]
+            for s in sizes
         ]
     )
     return kb
