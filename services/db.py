@@ -2,7 +2,6 @@
 from typing import Optional, List, Dict, Any
 import asyncpg
 from pydantic import BaseModel
-from decimal import Decimal
 from datetime import datetime
 
 
@@ -15,8 +14,10 @@ class ProductRow(BaseModel):
     name_product: str
     custom_name: Optional[str] = None
     selected_size: Optional[str] = None
-    last_basic_price: Optional[Decimal] = None
-    last_product_price: Optional[Decimal] = None
+    notify_mode: Optional[str] = None
+    notify_value: Optional[int] = None
+    last_basic_price: Optional[int] = None
+    last_product_price: Optional[int] = None
     last_qty: Optional[int] = None
     out_of_stock: Optional[bool] = None
     created_at: Optional[datetime] = None
@@ -32,8 +33,8 @@ class PriceHistoryRow(BaseModel):
     """Модель записи истории цен."""
     id: int
     product_id: int
-    basic_price: Decimal
-    product_price: Decimal
+    basic_price: int
+    product_price: int
     qty: int
     recorded_at: datetime
 
@@ -132,10 +133,11 @@ class DB:
     async def list_products(self, user_id: int) -> List[ProductRow]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
-                          selected_size, last_basic_price, last_product_price,
-                          last_qty, out_of_stock, created_at, updated_at
-                   FROM products WHERE user_id = $1 ORDER BY created_at DESC""",
+                """SELECT id, user_id, url_product, nm_id, name_product,
+                        custom_name, selected_size, last_basic_price,
+                        last_product_price, last_qty, out_of_stock,
+                        notify_mode, notify_value, created_at, updated_at
+                FROM products WHERE user_id = $1 ORDER BY created_at DESC""",
                 user_id,
             )
             return [ProductRow(**dict(r)) for r in rows]
@@ -143,16 +145,21 @@ class DB:
     async def all_products(self) -> List[ProductRow]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
-                          selected_size, last_basic_price, last_product_price,
-                          last_qty, out_of_stock, created_at, updated_at
-                   FROM products ORDER BY updated_at ASC NULLS FIRST"""
+                """SELECT id, user_id, url_product, nm_id, name_product,
+                        custom_name, selected_size, last_basic_price,
+                        last_product_price, last_qty, out_of_stock,
+                        notify_mode, notify_value, created_at, updated_at
+                FROM products ORDER BY updated_at ASC NULLS FIRST"""
             )
             return [ProductRow(**dict(r)) for r in rows]
 
     async def update_prices_and_stock(
-            self, product_id: int, basic: Decimal, product: Decimal,
-            last_qty: Optional[int] = None, out_of_stock: Optional[bool] = None
+            self,
+            product_id: int,
+            basic: int,
+            product: int,
+            last_qty: Optional[int] = None,
+            out_of_stock: Optional[bool] = None
     ):
         """Обновить цены и остатки товара."""
         async with self.pool.acquire() as conn:
@@ -185,26 +192,30 @@ class DB:
     async def get_product_by_id(self, product_id: int) -> Optional[ProductRow]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
-                          selected_size, last_basic_price, last_product_price,
-                          last_qty, out_of_stock, created_at, updated_at
-                   FROM products WHERE id = $1""",
+                """SELECT id, user_id, url_product, nm_id, name_product,
+                        custom_name, selected_size, last_basic_price,
+                        last_product_price, last_qty, out_of_stock,
+                        notify_mode, notify_value, created_at, updated_at
+                FROM products WHERE id = $1""",
                 product_id
             )
             return ProductRow(**dict(row)) if row else None
 
-    async def get_product_by_nm(self, user_id: int, nm_id: int) -> Optional[ProductRow]:
+    async def get_product_by_nm(
+            self, user_id: int, nm_id: int
+    ) -> Optional[ProductRow]:
         """Получить товар по артикулу."""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
-                          selected_size, last_basic_price, last_product_price,
-                          last_qty, out_of_stock, created_at, updated_at
-                   FROM products WHERE user_id = $1 AND nm_id = $2""",
+                """SELECT id, user_id, url_product, nm_id, name_product,
+                        custom_name, selected_size, last_basic_price,
+                        last_product_price, last_qty, out_of_stock,
+                        notify_mode, notify_value, created_at, updated_at
+                FROM products WHERE user_id = $1 AND nm_id = $2""",
                 user_id, nm_id
             )
             return ProductRow(**dict(row)) if row else None
-        
+
     async def set_selected_size(self, product_id: int, size_name: str):
         """Сохраняет выбранный размер для товара."""
         async with self.pool.acquire() as conn:
@@ -215,7 +226,7 @@ class DB:
 
     # --- Price History ---
     async def add_price_history(
-            self, product_id: int, basic: Decimal, product: Decimal, qty: int = 0
+            self, product_id: int, basic: int, product: int, qty: int = 0
     ):
         """Добавить запись в историю цен."""
         async with self.pool.acquire() as conn:
@@ -248,3 +259,14 @@ class DB:
                    WHERE recorded_at < now() - interval '%s days'""",
                 days
             )
+
+    async def set_notify_settings(
+        self, product_id: int, mode: Optional[str], value: Optional[int]
+    ):
+        """Установить настройки уведомлений для товара."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE products SET notify_mode = $1, notify_value = $2 WHERE id = $3",
+                mode, value, product_id
+            )
+

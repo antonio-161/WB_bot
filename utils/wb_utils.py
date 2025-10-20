@@ -1,7 +1,6 @@
 """Утилиты для Wildberries — извлечение nm_id из ссылки и расчёты."""
 import re
 from typing import Optional
-import math
 
 
 def extract_nm_id(text: str) -> Optional[int]:
@@ -32,17 +31,15 @@ def extract_nm_id(text: str) -> Optional[int]:
     return None
 
 
-def apply_wallet_discount(price: float, discount_percent: int) -> float:
+def apply_wallet_discount(price: int, discount_percent: int) -> int:
     """
-    Применяет скидку WB кошелька и всегда округляет вниз до копеек.
+    Применяет скидку WB кошелька и округляет вниз (int).
     """
     if discount_percent <= 0:
         return price
     
     discounted = price * (1 - discount_percent / 100.0)
-    # округляем вниз до 2 знаков
-    floored = math.floor(discounted * 100) / 100.0
-    return floored
+    return int(discounted)  # Округление вниз
 
 
 def format_price_change(old_price: float, new_price: float) -> dict:

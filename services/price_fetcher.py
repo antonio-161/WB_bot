@@ -3,7 +3,6 @@ import logging
 import random
 from typing import Dict, Optional
 import aiohttp
-from decimal import Decimal
 from constants import DEFAULT_DEST
 
 logger = logging.getLogger(__name__)
@@ -145,8 +144,8 @@ class PriceFetcher:
                         "name": s.get("name", ""),
                         "origName": s.get("origName", ""),
                         "price": {
-                            "basic": Decimal(str(price_data.get("basic", 0))) / 100,
-                            "product": Decimal(str(price_data.get("product", 0))) / 100,
+                            "basic": int(price_data.get("basic", 0)) // 100,
+                            "product": int(price_data.get("product", 0)) // 100,
                         },
                         "stocks": [{"qty": stock.get("qty", 0)} for stock in s.get("stocks", [])]
                     }

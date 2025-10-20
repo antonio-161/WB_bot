@@ -1,17 +1,18 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
-from states.user_states import AddProductState, RenameProductState
+from states.user_states import AddProductState, RenameProductState, SetNotifyState
 from services.db import DB
 from services.price_fetcher import PriceFetcher
 from utils.wb_utils import extract_nm_id
 from keyboards.kb import (
     products_inline, main_inline_kb, sizes_inline_kb,
-    product_detail_kb, confirm_remove_kb, back_to_product_kb
+    product_detail_kb, confirm_remove_kb, back_to_product_kb, notify_mode_kb
 )
 from utils.graph_generator import generate_price_graph
-from decimal import Decimal
 import logging
+from utils.export_utils import generate_excel, generate_csv
+from datetime import datetime
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -115,8 +116,8 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
             # Для товаров без размеров цена находится в первом элементе sizes
             size_data = sizes[0] if sizes else {}
             price_info = size_data.get("price", {})
-            price_basic = Decimal(str(price_info.get("basic", 0)))
-            price_product = Decimal(str(price_info.get("product", 0)))
+            price_basic = price_info.get("basic", 0)
+            price_product = price_info.get("product", 0)
             qty = sum(stock.get("qty", 0) for stock in size_data.get("stocks", []))
             
             await db.update_prices_and_stock(
@@ -191,8 +192,8 @@ async def select_size_cb(query: CallbackQuery, state: FSMContext, db: DB, price_
             size_data = next((s for s in product_data["sizes"] if s["name"] == size_name), None)
             if size_data:
                 price_info = size_data.get("price", {})
-                price_basic = Decimal(str(price_info.get("basic", 0)))
-                price_product = Decimal(str(price_info.get("product", 0)))
+                price_basic = price_info.get("basic", 0)
+                price_product = price_info.get("product", 0)
                 qty = sum(stock.get("qty", 0) for stock in size_data.get("stocks", []))
                 
                 await db.update_prices_and_stock(
@@ -245,19 +246,19 @@ async def cb_list_products(query: CallbackQuery, db: DB):
 
     text = "📦 <b>Отслеживаемые товары:</b>\n\n"
     products_data = []
-    
+
     for i, p in enumerate(products, 1):
         display_name = p.display_name
         price_info = ""
         if p.last_product_price:
-            price = float(p.last_product_price)
+            price = p.last_product_price
             if discount > 0:
                 from utils.wb_utils import apply_wallet_discount
                 final_price = apply_wallet_discount(price, discount)
-                price_info = f" — {final_price:.2f} ₽"
+                price_info = f" — {final_price} ₽"
             else:
-                price_info = f" — {price:.2f} ₽"
-        
+                price_info = f" — {price} ₽"
+
         text += f'{i}. {display_name[:45]}{price_info}\n'
         products_data.append({"nm_id": p.nm_id, "name": display_name})
 
@@ -297,40 +298,48 @@ async def cb_product_detail(query: CallbackQuery, db: DB):
         text += f"🔘 Размер: <b>{product.selected_size}</b>\n"
     
     if product.last_product_price:
-        price = float(product.last_product_price)
+        price = product.last_product_price
         if discount > 0:
             from utils.wb_utils import apply_wallet_discount
             final_price = apply_wallet_discount(price, discount)
-            text += f"💰 Цена: {price:.2f} ₽\n"
-            text += f"💳 С кошельком ({discount}%): <b>{final_price:.2f} ₽</b>\n"
+            text += f"💰 Цена: {price} ₽\n"
+            text += f"💳 С кошельком ({discount}%): <b>{final_price} ₽</b>\n"
         else:
-            text += f"💰 Текущая цена: <b>{price:.2f} ₽</b>\n"
+            text += f"💰 Текущая цена: <b>{price} ₽</b>\n"
     
     if product.last_qty is not None:
         if product.out_of_stock:
             text += f"📦 Остаток: <b>Нет в наличии</b>\n"
         else:
             text += f"📦 Остаток: <b>{product.last_qty} шт.</b>\n"
-    
+
     # Статистика из истории
     if history:
-        prices = [float(h.product_price) for h in history]
+        prices = [h.product_price for h in history]
         min_price = min(prices)
         max_price = max(prices)
         text += f"\n📊 <b>Статистика:</b>\n"
-        
+
         if discount > 0:
             from utils.wb_utils import apply_wallet_discount
             min_with_discount = apply_wallet_discount(min_price, discount)
             max_with_discount = apply_wallet_discount(max_price, discount)
-            text += f"• Мин. цена: {min_with_discount:.2f} ₽ (было {min_price:.2f} ₽)\n"
-            text += f"• Макс. цена: {max_with_discount:.2f} ₽ (было {max_price:.2f} ₽)\n"
+            text += f"• Мин. цена: {min_price} ₽ (с WB кошельком {min_with_discount} ₽)\n"
+            text += f"• Макс. цена: {max_price} ₽ (с WB кошельком {max_with_discount} ₽)\n"
         else:
-            text += f"• Мин. цена: {min_price:.2f} ₽\n"
-            text += f"• Макс. цена: {max_price:.2f} ₽\n"
-    
+            text += f"• Мин. цена: {min_price} ₽\n"
+            text += f"• Макс. цена: {max_price} ₽\n"
+
+        # Настройки уведомлений
+    if product.notify_mode == "percent":
+        text += f"\n🔔 Уведомления: при снижении на {product.notify_value}%"
+    elif product.notify_mode == "threshold":
+        text += f"\n🔔 Уведомления: при цене ≤ {product.notify_value} ₽"
+    else:
+        text += "\n🔔 Уведомления: все изменения цены"
+
     text += f"\n🕐 Добавлен: {product.created_at.strftime('%d.%m.%Y %H:%M')}"
-    
+
     await query.message.edit_text(
         text,
         reply_markup=product_detail_kb(nm_id),
@@ -344,14 +353,14 @@ async def cb_product_detail(query: CallbackQuery, db: DB):
 async def cb_show_graph(query: CallbackQuery, db: DB):
     """Показать график изменения цены."""
     nm_id = int(query.data.split(":", 1)[1])
-    
+
     product = await db.get_product_by_nm(query.from_user.id, nm_id)
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
-    
+
     history = await db.get_price_history(product.id, limit=100)
-    
+
     if len(history) < 2:
         await query.answer(
             "📊 Недостаточно данных для графика.\n"
@@ -359,30 +368,30 @@ async def cb_show_graph(query: CallbackQuery, db: DB):
             show_alert=True
         )
         return
-    
+
     await query.answer("⏳ Генерирую график...")
-    
+
     try:
         # Генерируем график
         graph_buffer = await generate_price_graph(history, product.display_name)
-        
+
         # Отправляем как фото
         photo = BufferedInputFile(graph_buffer.read(), filename=f"price_graph_{nm_id}.png")
-        
+
         caption = (
             f"📈 <b>График цен</b>\n\n"
             f"📦 {product.display_name}\n"
             f"🔢 Артикул: <code>{nm_id}</code>\n"
             f"📊 Записей: {len(history)}"
         )
-        
+
         await query.message.answer_photo(
             photo=photo,
             caption=caption,
             parse_mode="HTML",
             reply_markup=back_to_product_kb(nm_id)
         )
-        
+
     except Exception as e:
         logger.exception(f"Ошибка при генерации графика для {nm_id}: {e}")
         await query.message.answer(
@@ -568,3 +577,256 @@ async def cb_back_to_menu(query: CallbackQuery):
     )
     await query.answer()
 
+
+# ---------------- Настройка уведомлений ----------------
+@router.callback_query(F.data.startswith("notify_settings:"))
+async def cb_notify_settings(query: CallbackQuery, db: DB):
+    """Показать меню настройки уведомлений."""
+    nm_id = int(query.data.split(":", 1)[1])
+    
+    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+    if not product:
+        await query.answer("❌ Товар не найден", show_alert=True)
+        return
+    
+    current_settings = "Все изменения цены"
+    if product.notify_mode == "percent":
+        current_settings = f"При снижении на {product.notify_value}%"
+    elif product.notify_mode == "threshold":
+        current_settings = f"При цене ≤ {product.notify_value} ₽"
+    
+    await query.message.edit_text(
+        f"🔔 <b>Настройка уведомлений</b>\n\n"
+        f"📦 {product.display_name}\n\n"
+        f"Текущая настройка: <b>{current_settings}</b>\n\n"
+        f"Выберите режим уведомлений:",
+        parse_mode="HTML",
+        reply_markup=notify_mode_kb(nm_id)
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("notify_percent:"))
+async def cb_notify_percent(query: CallbackQuery, state: FSMContext, db: DB):
+    """Установка процента снижения."""
+    nm_id = int(query.data.split(":", 1)[1])
+    
+    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+    if not product:
+        await query.answer("❌ Товар не найден", show_alert=True)
+        return
+    
+    await state.update_data(nm_id=nm_id, product_id=product.id, notify_mode="percent")
+    await state.set_state(SetNotifyState.waiting_for_value)
+    
+    await query.message.answer(
+        f"📊 <b>Установка процента снижения</b>\n\n"
+        f"Введите процент (например: <code>3</code> или <code>10</code>)\n\n"
+        f"При снижении цены на указанный процент или больше — вы получите уведомление.\n\n"
+        f"Отправьте /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("notify_threshold:"))
+async def cb_notify_threshold(query: CallbackQuery, state: FSMContext, db: DB):
+    """Установка целевой цены."""
+    nm_id = int(query.data.split(":", 1)[1])
+    
+    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+    if not product:
+        await query.answer("❌ Товар не найден", show_alert=True)
+        return
+    
+    await state.update_data(nm_id=nm_id, product_id=product.id, notify_mode="threshold")
+    await state.set_state(SetNotifyState.waiting_for_value)
+    
+    current_price = product.last_product_price or 0
+    
+    await query.message.answer(
+        f"💰 <b>Установка целевой цены</b>\n\n"
+        f"Текущая цена: {current_price} ₽\n\n"
+        f"Введите целевую цену (например: <code>3000</code>)\n\n"
+        f"Когда цена станет равна или ниже — вы получите уведомление.\n\n"
+        f"Отправьте /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("notify_all:"))
+async def cb_notify_all(query: CallbackQuery, db: DB):
+    """Включить все уведомления."""
+    nm_id = int(query.data.split(":", 1)[1])
+
+    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+    if not product:
+        await query.answer("❌ Товар не найден", show_alert=True)
+        return
+
+    await db.set_notify_settings(product.id, None, None)
+
+    await query.message.edit_text(
+        f"✅ <b>Настройки уведомлений обновлены</b>\n\n"
+        f"📦 {product.display_name}\n\n"
+        f"🔔 Теперь вы будете получать уведомления о <b>всех</b> изменениях цены.",
+        parse_mode="HTML",
+        reply_markup=product_detail_kb(nm_id)
+    )
+    await query.answer("Все уведомления включены")
+
+
+@router.message(SetNotifyState.waiting_for_value)
+async def process_notify_value(message: Message, state: FSMContext, db: DB):
+    """Обработка введённого значения (процент или порог)."""
+    if message.text == "/cancel":
+        await message.answer("❌ Настройка уведомлений отменена", reply_markup=main_inline_kb())
+        await state.clear()
+        return
+
+    try:
+        value = int(message.text.strip())
+        if value <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введите положительное целое число")
+        return
+
+    data = await state.get_data()
+    product_id = data.get("product_id")
+    nm_id = data.get("nm_id")
+    notify_mode = data.get("notify_mode")
+
+    # Проверка диапазонов
+    if notify_mode == "percent" and value > 100:
+        await message.answer("❌ Процент не может быть больше 100")
+        return
+
+    try:
+        await db.set_notify_settings(product_id, notify_mode, value)
+
+        if notify_mode == "percent":
+            msg = f"✅ Уведомления настроены!\n\nВы будете получать уведомления при снижении цены на <b>{value}%</b> и более."
+        else:
+            msg = f"✅ Уведомления настроены!\n\nВы будете получать уведомления когда цена станет <b>{value} ₽</b> или ниже."
+
+        await message.answer(
+            msg,
+            parse_mode="HTML",
+            reply_markup=product_detail_kb(nm_id)
+        )
+
+    except Exception as e:
+        logger.exception(f"Ошибка при сохранении настроек уведомлений: {e}")
+        await message.answer(
+            "❌ Ошибка при сохранении настроек",
+            reply_markup=main_inline_kb()
+        )
+
+    await state.clear()
+
+
+# ---------------- Экспорт данных ----------------
+@router.callback_query(F.data == "export_excel")
+async def cb_export_excel(query: CallbackQuery, db: DB):
+    """Выгрузка товаров в Excel."""
+    products = await db.list_products(query.from_user.id)
+    
+    if not products:
+        await query.answer("📭 Нет товаров для экспорта", show_alert=True)
+        return
+    
+    await query.answer("⏳ Формирую файл...")
+    
+    try:
+        # Получаем скидку пользователя
+        user = await db.get_user(query.from_user.id)
+        discount = user.get("discount_percent", 0) if user else 0
+        
+        # Генерируем Excel
+        excel_buffer = await generate_excel(products, discount)
+        
+        # Формируем имя файла
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"wb_products_{timestamp}.xlsx"
+        
+        # Отправляем файл
+        from aiogram.types import BufferedInputFile
+        
+        document = BufferedInputFile(excel_buffer.read(), filename=filename)
+        
+        caption = (
+            f"📊 <b>Экспорт товаров</b>\n\n"
+            f"📦 Товаров: {len(products)}\n"
+            f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        )
+        
+        if discount > 0:
+            caption += f"\n💳 С учётом скидки кошелька: {discount}%"
+        
+        await query.message.answer_document(
+            document=document,
+            caption=caption,
+            parse_mode="HTML"
+        )
+        
+        logger.info(f"Пользователь {query.from_user.id} экспортировал {len(products)} товаров в Excel")
+        
+    except Exception as e:
+        logger.exception(f"Ошибка при экспорте в Excel: {e}")
+        await query.message.answer(
+            "❌ Произошла ошибка при формировании файла.\nПопробуйте позже."
+        )
+
+
+@router.callback_query(F.data == "export_csv")
+async def cb_export_csv(query: CallbackQuery, db: DB):
+    """Выгрузка товаров в CSV."""
+    products = await db.list_products(query.from_user.id)
+    
+    if not products:
+        await query.answer("📭 Нет товаров для экспорта", show_alert=True)
+        return
+    
+    await query.answer("⏳ Формирую файл...")
+    
+    try:
+        # Получаем скидку пользователя
+        user = await db.get_user(query.from_user.id)
+        discount = user.get("discount_percent", 0) if user else 0
+        
+        # Генерируем CSV
+        csv_buffer = await generate_csv(products, discount)
+        
+        # Формируем имя файла
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"wb_products_{timestamp}.csv"
+        
+        # Отправляем файл
+        from aiogram.types import BufferedInputFile
+        
+        document = BufferedInputFile(csv_buffer.read(), filename=filename)
+        
+        caption = (
+            f"📊 <b>Экспорт товаров (CSV)</b>\n\n"
+            f"📦 Товаров: {len(products)}\n"
+            f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        )
+        
+        if discount > 0:
+            caption += f"\n💳 С учётом скидки кошелька: {discount}%"
+        
+        await query.message.answer_document(
+            document=document,
+            caption=caption,
+            parse_mode="HTML"
+        )
+        
+        logger.info(f"Пользователь {query.from_user.id} экспортировал {len(products)} товаров в CSV")
+        
+    except Exception as e:
+        logger.exception(f"Ошибка при экспорте в CSV: {e}")
+        await query.message.answer(
+            "❌ Произошла ошибка при формировании файла.\nПопробуйте позже."
+        )

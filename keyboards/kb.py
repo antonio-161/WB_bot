@@ -16,6 +16,8 @@ def main_inline_kb() -> InlineKeyboardMarkup:
                     text="📦 Мои товары",
                     callback_data="list_products"
                 ),
+            ],
+            [
                 InlineKeyboardButton(
                     text="🗑 Удалить товар",
                     callback_data="remove_product"
@@ -23,12 +25,14 @@ def main_inline_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="📊 Экспорт в Excel",
+                    callback_data="export_excel"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="⚙️ Настройки",
                     callback_data="settings"
-                ),
-                InlineKeyboardButton(
-                    text="💰 Мой тариф",
-                    callback_data="my_plan"
                 ),
             ],
         ]
@@ -108,6 +112,12 @@ def product_detail_kb(nm_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="🔔 Настроить уведомления",
+                    callback_data=f"notify_settings:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="✏️ Переименовать",
                     callback_data=f"rename:{nm_id}"
                 ),
@@ -153,8 +163,47 @@ def settings_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="💰 Мой тариф",
+                    callback_data="my_plan"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="« Назад",
                     callback_data="back_to_menu"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def notify_mode_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора режима уведомлений."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📊 По проценту снижения",
+                    callback_data=f"notify_percent:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💰 По целевой цене",
+                    callback_data=f"notify_threshold:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔕 Отключить (все уведомления)",
+                    callback_data=f"notify_all:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data=f"product_detail:{nm_id}"
                 ),
             ],
         ]
@@ -206,7 +255,7 @@ def sizes_inline_kb(nm: int, sizes: list[dict]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(
-                text=s.get("name"), 
+                text=s.get("name"),
                 callback_data=f"select_size:{nm}:{s.get('name')}"
             )]
             for s in sizes
@@ -238,6 +287,27 @@ def back_to_product_kb(nm_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="« Назад в карточку товара",
                     callback_data=f"back_to_product:{nm_id}"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def upgrade_plan_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для улучшения тарифа."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⬆️ Улучшить тариф",
+                    callback_data="upgrade_plan"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data="back_to_menu"
                 ),
             ],
         ]

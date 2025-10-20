@@ -16,3 +16,8 @@ class SetPVZState(StatesGroup):
 
 class RenameProductState(StatesGroup):
     waiting_for_name = State()
+
+
+class SetNotifyState(StatesGroup):
+    waiting_for_choice = State()
+    waiting_for_value = State()

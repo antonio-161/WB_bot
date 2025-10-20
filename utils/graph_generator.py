@@ -34,7 +34,7 @@ async def generate_price_graph(
     
     # Извлекаем данные
     dates = [h.recorded_at for h in history]
-    prices = [float(h.product_price) for h in history]
+    prices = [h.product_price for h in history]
     
     # Создаем график
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -75,9 +75,9 @@ async def generate_price_graph(
     current_price = prices[-1]
     
     stats_text = (
-        f'Мин: {min_price:.2f}₽ | '
-        f'Макс: {max_price:.2f}₽ | '
-        f'Текущая: {current_price:.2f}₽'
+        f'Мин: {min_price}₽ | '
+        f'Макс: {max_price}₽ | '
+        f'Текущая: {current_price}₽'
     )
     
     ax.text(

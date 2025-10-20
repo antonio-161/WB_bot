@@ -3,7 +3,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from states.user_states import SetDiscountState
 from services.db import DB
-from keyboards.kb import settings_kb, back_to_settings_kb, main_inline_kb
+from keyboards.kb import (
+    settings_kb, back_to_settings_kb, upgrade_plan_kb, choose_plan_kb
+)
 
 router = Router()
 
@@ -57,7 +59,7 @@ async def cb_set_discount(query: CallbackQuery, state: FSMContext, db: DB):
     """Начало установки скидки через callback."""
     user = await db.get_user(query.from_user.id)
     current_discount = user.get("discount_percent", 0) if user else 0
-    
+
     await query.message.answer(
         "💳 <b>Установка скидки WB кошелька</b>\n\n"
         f"Текущая скидка: <b>{current_discount}%</b>\n\n"
@@ -75,10 +77,12 @@ async def cb_set_discount(query: CallbackQuery, state: FSMContext, db: DB):
 async def process_discount(message: Message, state: FSMContext, db: DB):
     """Установка скидки."""
     if message.text == "/cancel":
-        await message.answer("❌ Установка скидки отменена", reply_markup=settings_kb())
+        await message.answer(
+            "❌ Установка скидки отменена", reply_markup=settings_kb()
+        )
         await state.clear()
         return
-    
+
     try:
         v = int(message.text.strip())
         if v < 0 or v > 100:
@@ -134,6 +138,21 @@ async def cb_my_plan(query: CallbackQuery, db: DB):
     await query.message.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=main_inline_kb()
+        reply_markup=upgrade_plan_kb()
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data == "upgrade_plan")
+async def cb_upgrade_plan(query: CallbackQuery):
+    """Показать доступные тарифы для улучшения."""
+    await query.message.edit_text(
+        "📋 <b>Выберите новый тариф:</b>\n\n"
+        "🎁 <b>Бесплатный</b> — до 5 товаров\n"
+        "💼 <b>Базовый</b> — до 50 товаров\n"
+        "🚀 <b>Продвинутый</b> — до 250 товаров\n\n"
+        "Для смены тарифа выберите один из вариантов ниже:",
+        parse_mode="HTML",
+        reply_markup=choose_plan_kb()
     )
     await query.answer()

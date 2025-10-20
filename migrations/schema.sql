@@ -18,9 +18,12 @@ CREATE TABLE IF NOT EXISTS products (
     nm_id BIGINT NOT NULL,
     name_product TEXT DEFAULT 'Загрузка...',
     custom_name TEXT DEFAULT NULL,              -- пользовательское название
-    last_basic_price NUMERIC(10,2),
-    last_product_price NUMERIC(10,2),
+    last_basic_price INT,
+    last_product_price INT,
     selected_size TEXT DEFAULT NULL,
+    -- Настройки уведомлений
+    notify_mode TEXT DEFAULT NULL,  -- 'percent', 'threshold', NULL (все уведомления)
+    notify_value INT DEFAULT NULL,  -- Процент или порог
     last_qty INT DEFAULT 0,
     out_of_stock BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
@@ -32,8 +35,8 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS price_history (
     id SERIAL PRIMARY KEY,
     product_id INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-    basic_price NUMERIC(10,2) NOT NULL,
-    product_price NUMERIC(10,2) NOT NULL,
+    basic_price INT NOT NULL,
+    product_price INT NOT NULL,
     qty INT DEFAULT 0,
     recorded_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );

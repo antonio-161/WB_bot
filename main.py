@@ -13,7 +13,6 @@ from handlers import (
     settings as settings_h,
     region as region_h
 )
-from decimal import Decimal
 from utils.wb_utils import apply_wallet_discount
 from constants import DEFAULT_DEST
 
@@ -38,9 +37,8 @@ async def monitor_loop(container: Container, bot: Bot):
     cycles = 0
     report_every = max(1, 3600 // poll)
 
-    async def process_product(p: ProductRow, metrics: dict):
+    async def process_product(p: ProductRow, metrics: dict[str, int]):
         """Обрабатываем один товар."""
-        metrics["processed"] += 1
         try:
             user = await container.db.get_user(p.user_id)
             dest = user.get("dest", DEFAULT_DEST) if user else DEFAULT_DEST
@@ -52,18 +50,20 @@ async def monitor_loop(container: Container, bot: Bot):
                 logger.warning(f"[nm={p.nm_id}] Не удалось получить данные о товаре")
                 return
 
-            # Если есть размеры
             sizes = new_data.get("sizes", [])
 
-            # --- Если товар имеет размеры ---
-            if sizes:
+            # Определяем, есть ли реальные размеры (например S, M, XL)
+            has_real_sizes = any(s.get("name") not in ("", "0", None) for s in sizes)
+
+            # --- ТОВАР С РАЗМЕРАМИ ---
+            if has_real_sizes:
                 selected_size = p.selected_size
                 if not selected_size:
-                    # У товара есть размеры, но пользователь не выбрал — пропускаем
+                    # Пользователь не выбрал размер — пропускаем обработку
                     logger.info(f"[nm={p.nm_id}] Размер не выбран, пропуск (ожидание выбора пользователем)")
                     return
 
-                # Находим данные по выбранному размеру
+                # Находим выбранный размер
                 size_data = next((s for s in sizes if s.get("name") == selected_size), None)
                 if not size_data:
                     metrics["errors"] += 1
@@ -73,23 +73,21 @@ async def monitor_loop(container: Container, bot: Bot):
                 price_info = size_data.get("price", {})
                 stocks = size_data.get("stocks", [])
 
-            # --- Если у товара НЕТ размеров вообще ---
+            # --- ТОВАР БЕЗ РЕАЛЬНЫХ РАЗМЕРОВ ---
             else:
-                logger.debug(f"[nm={p.nm_id}] Товар без размеров — мониторим по артикула целиком")
-                
-                # Wildberries возвращает такие товары без поля sizes, поэтому достаём цену и остатки напрямую
-                price_info = new_data.get("price", {})
-                stocks = new_data.get("stocks", [])
-                
-                # Защита от пустых данных
+
+                size_data = sizes[0] if sizes else {}
+                price_info = size_data.get("price", new_data.get("price", {}))
+                stocks = size_data.get("stocks", new_data.get("stocks", []))
+
                 if not price_info:
                     metrics["errors"] += 1
                     logger.warning(f"[nm={p.nm_id}] Нет данных о цене (товар без размеров)")
                     return
 
-
-            new_basic = Decimal(str(price_info.get("basic", 0)))
-            new_prod = Decimal(str(price_info.get("product", 0)))
+            # --- ОБЩИЕ ДАННЫЕ ---
+            new_basic = price_info.get("basic", 0)
+            new_prod = price_info.get("product", 0)
             qty_total = sum(stock.get("qty", 0) for stock in stocks)
             out_of_stock = qty_total == 0
 
@@ -99,44 +97,51 @@ async def monitor_loop(container: Container, bot: Bot):
 
             old_prod = p.last_product_price
             old_qty = getattr(p, "last_qty", None)
-            notify_price = old_prod is not None and new_prod < old_prod
+
+            # --- Проверка уведомлений ---
+            notify_price = False
+            if old_prod is not None and new_prod < old_prod:
+                if p.notify_mode == "percent":
+                    percent_drop = ((old_prod - new_prod) / old_prod) * 100
+                    notify_price = percent_drop >= p.notify_value
+                elif p.notify_mode == "threshold":
+                    notify_price = new_prod <= p.notify_value
+                else:
+                    notify_price = True
+
             notify_stock = old_qty is not None and old_qty > 0 and out_of_stock
 
-            # Проверяем, изменилась ли цена для сохранения в историю
-            price_changed = old_prod is None or new_prod != old_prod
-
-            # Сохраняем цены и остатки
+            # --- Сохраняем новые данные ---
             await container.db.update_prices_and_stock(
                 p.id, new_basic, new_prod, qty_total, out_of_stock
             )
 
-            # Добавляем в историю только если цена изменилась
-            if price_changed:
+            # Добавляем запись в историю при изменении цены
+            if old_prod is None or new_prod != old_prod:
                 await container.db.add_price_history(p.id, new_basic, new_prod, qty_total)
 
             metrics["processed"] += 1
 
-            # Формируем уведомление
+            # --- Формируем уведомления ---
             msg = ""
             if notify_price:
                 discount = user.get("discount_percent", 0) if user else 0
-                price_no_wallet = float(new_prod)
+                price_no_wallet = new_prod
                 price_with_wallet = apply_wallet_discount(price_no_wallet, discount)
-                old_price = float(old_prod)
-                diff = old_price - price_no_wallet
-                diff_percent = (diff / old_price) * 100
+                diff = old_prod - price_no_wallet
+                diff_percent = (diff / old_prod) * 100
 
                 msg += (
                     f"🔔 <b>Цена снизилась!</b>\n\n"
                     f"📦 {p.display_name}\n"
                     f"🔗 <a href='{p.url_product}'>Открыть товар</a>\n\n"
-                    f"💰 <b>Новая цена:</b> {price_no_wallet:.2f} ₽\n"
+                    f"💰 <b>Новая цена:</b> {price_no_wallet} ₽\n"
                 )
                 if discount > 0:
-                    msg += f"💳 <b>С WB кошельком ({discount}%):</b> {price_with_wallet:.2f} ₽\n"
+                    msg += f"💳 <b>С WB кошельком ({discount}%):</b> {price_with_wallet} ₽\n"
                 msg += (
-                    f"📉 <b>Было:</b> {old_price:.2f} ₽\n"
-                    f"✅ <b>Экономия:</b> {diff:.2f} ₽ ({diff_percent:.1f}%)\n"
+                    f"📉 <b>Было:</b> {old_prod} ₽\n"
+                    f"✅ <b>Экономия:</b> {diff} ₽ ({diff_percent:.1f}%)\n"
                 )
 
             if notify_stock:
