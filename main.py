@@ -18,7 +18,7 @@ from utils.wb_utils import apply_wallet_discount
 from constants import DEFAULT_DEST
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.LOG_LEVEL),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -39,6 +39,8 @@ async def monitor_loop(container: Container, bot: Bot):
     report_every = max(1, 3600 // poll)
 
     async def process_product(p: ProductRow, metrics: dict):
+        """Обрабатываем один товар."""
+        metrics["processed"] += 1
         try:
             user = await container.db.get_user(p.user_id)
             dest = user.get("dest", DEFAULT_DEST) if user else DEFAULT_DEST
@@ -52,26 +54,39 @@ async def monitor_loop(container: Container, bot: Bot):
 
             # Если есть размеры
             sizes = new_data.get("sizes", [])
+
+            # --- Если товар имеет размеры ---
             if sizes:
                 selected_size = p.selected_size
                 if not selected_size:
-                    # Пользователь не выбрал размер — пропускаем обработку
-                    logger.info(f"[nm={p.nm_id}] Размер не выбран, пропуск")
+                    # У товара есть размеры, но пользователь не выбрал — пропускаем
+                    logger.info(f"[nm={p.nm_id}] Размер не выбран, пропуск (ожидание выбора пользователем)")
                     return
 
-                # Находим выбранный размер
+                # Находим данные по выбранному размеру
                 size_data = next((s for s in sizes if s.get("name") == selected_size), None)
                 if not size_data:
                     metrics["errors"] += 1
-                    logger.warning(f"[nm={p.nm_id}] Выбранный размер '{selected_size}' не найден")
+                    logger.warning(f"[nm={p.nm_id}] Выбранный размер '{selected_size}' не найден среди {len(sizes)} вариантов")
                     return
 
                 price_info = size_data.get("price", {})
                 stocks = size_data.get("stocks", [])
+
+            # --- Если у товара НЕТ размеров вообще ---
             else:
-                # Товар без размеров
+                logger.debug(f"[nm={p.nm_id}] Товар без размеров — мониторим по артикула целиком")
+                
+                # Wildberries возвращает такие товары без поля sizes, поэтому достаём цену и остатки напрямую
                 price_info = new_data.get("price", {})
                 stocks = new_data.get("stocks", [])
+                
+                # Защита от пустых данных
+                if not price_info:
+                    metrics["errors"] += 1
+                    logger.warning(f"[nm={p.nm_id}] Нет данных о цене (товар без размеров)")
+                    return
+
 
             new_basic = Decimal(str(price_info.get("basic", 0)))
             new_prod = Decimal(str(price_info.get("product", 0)))
@@ -87,10 +102,18 @@ async def monitor_loop(container: Container, bot: Bot):
             notify_price = old_prod is not None and new_prod < old_prod
             notify_stock = old_qty is not None and old_qty > 0 and out_of_stock
 
+            # Проверяем, изменилась ли цена для сохранения в историю
+            price_changed = old_prod is None or new_prod != old_prod
+
             # Сохраняем цены и остатки
             await container.db.update_prices_and_stock(
                 p.id, new_basic, new_prod, qty_total, out_of_stock
             )
+
+            # Добавляем в историю только если цена изменилась
+            if price_changed:
+                await container.db.add_price_history(p.id, new_basic, new_prod, qty_total)
+
             metrics["processed"] += 1
 
             # Формируем уведомление
@@ -105,7 +128,7 @@ async def monitor_loop(container: Container, bot: Bot):
 
                 msg += (
                     f"🔔 <b>Цена снизилась!</b>\n\n"
-                    f"📦 {p.name_product}\n"
+                    f"📦 {p.display_name}\n"
                     f"🔗 <a href='{p.url_product}'>Открыть товар</a>\n\n"
                     f"💰 <b>Новая цена:</b> {price_no_wallet:.2f} ₽\n"
                 )
@@ -119,7 +142,7 @@ async def monitor_loop(container: Container, bot: Bot):
             if notify_stock:
                 msg += (
                     f"⚠️ <b>Товар закончился!</b>\n\n"
-                    f"📦 {p.name_product}\n"
+                    f"📦 {p.display_name}\n"
                     f"🔗 <a href='{p.url_product}'>Открыть товар</a>\n"
                 )
 
@@ -196,6 +219,18 @@ async def monitor_loop(container: Container, bot: Bot):
             await asyncio.sleep(poll)
 
 
+async def cleanup_old_data(container: Container):
+    """Периодическая очистка старых данных."""
+    while True:
+        try:
+            await asyncio.sleep(86400)  # Раз в сутки
+            logger.info("Запуск очистки старой истории цен...")
+            await container.db.cleanup_old_history(days=90)
+            logger.info("Очистка завершена")
+        except Exception as e:
+            logger.exception(f"Ошибка при очистке истории: {e}")
+
+
 async def main():
     """Основная функция запуска бота."""
     logger.info("🚀 Запуск бота...")
@@ -208,7 +243,13 @@ async def main():
     await db.connect()
     logger.info("✅ Подключение к БД установлено")
 
-    fetcher = PriceFetcher()
+    # Создаём PriceFetcher с поддержкой x-pow
+    # Управляется через переменную окружения USE_XPOW (по умолчанию True)
+    fetcher = PriceFetcher(use_xpow=settings.USE_XPOW)
+    if settings.USE_XPOW:
+        logger.info("✅ X-POW токен включён (для получения данных о всех складах)")
+    else:
+        logger.info("ℹ️ X-POW токен отключён")
     container = Container(db=db, price_fetcher=fetcher)
 
     # Добавляем routers
@@ -226,6 +267,10 @@ async def main():
     monitor_task = asyncio.create_task(monitor_loop(container, bot))
     logger.info("✅ Монитор цен запущен")
 
+    # Запускаем очистку старых данных
+    cleanup_task = asyncio.create_task(cleanup_old_data(container))
+    logger.info("✅ Задача очистки данных запущена")
+
     # Установка команд бота
     await bot.set_my_commands([
         BotCommand(command="start", description="🏠 Главное меню"),
@@ -241,11 +286,25 @@ async def main():
         logger.info("⛔ Получен сигнал остановки")
     finally:
         monitor_task.cancel()
+        cleanup_task.cancel()
         try:
             await monitor_task
         except asyncio.CancelledError:
             pass
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
         
+        # Закрываем XPowFetcher если используется
+        try:
+            from services.xpow_fetcher import close_xpow_fetcher
+            await close_xpow_fetcher()
+            logger.info("✅ XPowFetcher закрыт")
+        except Exception as e:
+            logger.warning(f"Ошибка при закрытии XPowFetcher: {e}")
+        
+        await fetcher.close()
         await db.close()
         await bot.session.close()
         logger.info("✅ Бот остановлен")

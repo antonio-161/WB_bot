@@ -3,49 +3,9 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from states.user_states import SetDiscountState
 from services.db import DB
-from keyboards.kb import main_inline_kb
+from keyboards.kb import settings_kb, back_to_settings_kb, main_inline_kb
 
 router = Router()
-
-
-@router.callback_query(F.data == "set_discount")
-async def cb_set_discount(query: CallbackQuery, state: FSMContext):
-    """Начало установки скидки через callback."""
-    await query.message.answer(
-        "💳 <b>Установка скидки WB кошелька</b>\n\n"
-        "Введите размер скидки в процентах (целое число от 0 до 100).\n"
-        "Например: <code>7</code>\n\n"
-        "Эта скидка будет учитываться при расчёте финальной цены.",
-        parse_mode="HTML"
-    )
-    await state.set_state(SetDiscountState.waiting_for_discount)
-    await query.answer()
-
-
-@router.message(SetDiscountState.waiting_for_discount)
-async def process_discount(message: Message, state: FSMContext, db: DB):
-    """Установка скидки."""
-    try:
-        v = int(message.text.strip())
-        if v < 0 or v > 100:
-            raise ValueError
-    except ValueError:
-        await message.answer(
-            "❌ Неверный формат.\n"
-            "Введите целое число от 0 до 100."
-        )
-        return
-
-    await db.ensure_user(message.from_user.id)
-    await db.set_discount(message.from_user.id, v)
-
-    await message.answer(
-        f"✅ Скидка WB кошелька установлена: <b>{v}%</b>\n\n"
-        "Она будет учитываться при отображении цен.",
-        parse_mode="HTML",
-        reply_markup=main_inline_kb()
-    )
-    await state.clear()
 
 
 @router.callback_query(F.data == "settings")
@@ -87,9 +47,59 @@ async def cb_settings(query: CallbackQuery, db: DB):
     await query.message.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=main_inline_kb()
+        reply_markup=settings_kb()
     )
     await query.answer()
+
+
+@router.callback_query(F.data == "set_discount")
+async def cb_set_discount(query: CallbackQuery, state: FSMContext, db: DB):
+    """Начало установки скидки через callback."""
+    user = await db.get_user(query.from_user.id)
+    current_discount = user.get("discount_percent", 0) if user else 0
+    
+    await query.message.answer(
+        "💳 <b>Установка скидки WB кошелька</b>\n\n"
+        f"Текущая скидка: <b>{current_discount}%</b>\n\n"
+        "Введите размер скидки в процентах (целое число от 0 до 100).\n"
+        "Например: <code>7</code>\n\n"
+        "Эта скидка будет учитываться при расчёте финальной цены.\n\n"
+        "Отправьте /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await state.set_state(SetDiscountState.waiting_for_discount)
+    await query.answer()
+
+
+@router.message(SetDiscountState.waiting_for_discount)
+async def process_discount(message: Message, state: FSMContext, db: DB):
+    """Установка скидки."""
+    if message.text == "/cancel":
+        await message.answer("❌ Установка скидки отменена", reply_markup=settings_kb())
+        await state.clear()
+        return
+    
+    try:
+        v = int(message.text.strip())
+        if v < 0 or v > 100:
+            raise ValueError
+    except ValueError:
+        await message.answer(
+            "❌ Неверный формат.\n"
+            "Введите целое число от 0 до 100."
+        )
+        return
+
+    await db.ensure_user(message.from_user.id)
+    await db.set_discount(message.from_user.id, v)
+
+    await message.answer(
+        f"✅ Скидка WB кошелька установлена: <b>{v}%</b>\n\n"
+        "Она будет учитываться при отображении цен.",
+        parse_mode="HTML",
+        reply_markup=back_to_settings_kb()
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data == "my_plan")

@@ -1,4 +1,4 @@
-"""Обёртки для операций над пользователем и продуктами с поддержкой остатков и выбранного размера."""
+"""Обёртки для операций над пользователем и продуктами с поддержкой истории цен."""
 from typing import Optional, List, Dict, Any
 import asyncpg
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ class ProductRow(BaseModel):
     url_product: str
     nm_id: int
     name_product: str
+    custom_name: Optional[str] = None
     selected_size: Optional[str] = None
     last_basic_price: Optional[Decimal] = None
     last_product_price: Optional[Decimal] = None
@@ -20,6 +21,21 @@ class ProductRow(BaseModel):
     out_of_stock: Optional[bool] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+    @property
+    def display_name(self) -> str:
+        """Возвращает пользовательское имя или оригинальное."""
+        return self.custom_name if self.custom_name else self.name_product
+
+
+class PriceHistoryRow(BaseModel):
+    """Модель записи истории цен."""
+    id: int
+    product_id: int
+    basic_price: Decimal
+    product_price: Decimal
+    qty: int
+    recorded_at: datetime
 
 
 class DB:
@@ -57,13 +73,6 @@ class DB:
             await conn.execute(
                 "UPDATE users SET discount_percent = $1 WHERE id = $2",
                 discount_percent, user_id
-            )
-
-    async def set_region(self, user_id: int, dest: int):
-        async with self.pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE users SET dest = $1 WHERE id = $2",
-                dest, user_id
             )
 
     async def set_pvz(self, user_id: int, dest: int, address: Optional[str] = None):
@@ -123,7 +132,7 @@ class DB:
     async def list_products(self, user_id: int) -> List[ProductRow]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT id, user_id, url_product, nm_id, name_product,
+                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
                           selected_size, last_basic_price, last_product_price,
                           last_qty, out_of_stock, created_at, updated_at
                    FROM products WHERE user_id = $1 ORDER BY created_at DESC""",
@@ -134,7 +143,7 @@ class DB:
     async def all_products(self) -> List[ProductRow]:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT id, user_id, url_product, nm_id, name_product,
+                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
                           selected_size, last_basic_price, last_product_price,
                           last_qty, out_of_stock, created_at, updated_at
                    FROM products ORDER BY updated_at ASC NULLS FIRST"""
@@ -165,14 +174,34 @@ class DB:
                 name, product_id
             )
 
+    async def set_custom_name(self, product_id: int, custom_name: Optional[str]):
+        """Установить пользовательское имя товара."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE products SET custom_name = $1 WHERE id = $2",
+                custom_name, product_id
+            )
+
     async def get_product_by_id(self, product_id: int) -> Optional[ProductRow]:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """SELECT id, user_id, url_product, nm_id, name_product,
+                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
                           selected_size, last_basic_price, last_product_price,
                           last_qty, out_of_stock, created_at, updated_at
                    FROM products WHERE id = $1""",
                 product_id
+            )
+            return ProductRow(**dict(row)) if row else None
+
+    async def get_product_by_nm(self, user_id: int, nm_id: int) -> Optional[ProductRow]:
+        """Получить товар по артикулу."""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """SELECT id, user_id, url_product, nm_id, name_product, custom_name,
+                          selected_size, last_basic_price, last_product_price,
+                          last_qty, out_of_stock, created_at, updated_at
+                   FROM products WHERE user_id = $1 AND nm_id = $2""",
+                user_id, nm_id
             )
             return ProductRow(**dict(row)) if row else None
         
@@ -182,4 +211,40 @@ class DB:
             await conn.execute(
                 "UPDATE products SET selected_size=$1, updated_at=now() WHERE id=$2",
                 size_name, product_id
+            )
+
+    # --- Price History ---
+    async def add_price_history(
+            self, product_id: int, basic: Decimal, product: Decimal, qty: int = 0
+    ):
+        """Добавить запись в историю цен."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO price_history (product_id, basic_price, product_price, qty)
+                   VALUES ($1, $2, $3, $4)""",
+                product_id, basic, product, qty
+            )
+
+    async def get_price_history(
+            self, product_id: int, limit: int = 100
+    ) -> List[PriceHistoryRow]:
+        """Получить историю цен товара."""
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """SELECT id, product_id, basic_price, product_price, qty, recorded_at
+                   FROM price_history
+                   WHERE product_id = $1
+                   ORDER BY recorded_at DESC
+                   LIMIT $2""",
+                product_id, limit
+            )
+            return [PriceHistoryRow(**dict(r)) for r in rows]
+
+    async def cleanup_old_history(self, days: int = 90):
+        """Удалить историю старше N дней."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """DELETE FROM price_history
+                   WHERE recorded_at < now() - interval '%s days'""",
+                days
             )

@@ -23,16 +23,6 @@ def main_inline_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="💳 Скидка кошелька",
-                    callback_data="set_discount"
-                ),
-                InlineKeyboardButton(
-                    text="📍 Мой ПВЗ",
-                    callback_data="show_pvz"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
                     text="⚙️ Настройки",
                     callback_data="settings"
                 ),
@@ -79,13 +69,12 @@ def products_inline(products: list[dict]) -> InlineKeyboardMarkup:
 
     for p in products:
         name = p.get("name", f"Товар {p['nm_id']}")
-        # Обрезаем слишком длинные названия
         display_name = name[:40] + "..." if len(name) > 40 else name
 
         inline_rows.append([
             InlineKeyboardButton(
-                text=f"🛍 {display_name}",
-                url=f"https://www.wildberries.ru/catalog/{p['nm_id']}/detail.aspx"
+                text=f"📊 {display_name}",
+                callback_data=f"product_detail:{p['nm_id']}"
             )
         ])
 
@@ -107,6 +96,72 @@ def products_inline(products: list[dict]) -> InlineKeyboardMarkup:
     return kb
 
 
+def product_detail_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура детальной информации о товаре."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📈 График цен",
+                    callback_data=f"show_graph:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Переименовать",
+                    callback_data=f"rename:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔗 Открыть на WB",
+                    url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🗑 Удалить",
+                    callback_data=f"rm:{nm_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад к списку",
+                    callback_data="list_products"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def settings_kb() -> InlineKeyboardMarkup:
+    """Клавиатура настроек."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Скидка кошелька",
+                    callback_data="set_discount"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📍 Мой ПВЗ",
+                    callback_data="show_pvz"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data="back_to_menu"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
 def confirm_remove_kb(nm_id: int) -> InlineKeyboardMarkup:
     """Подтверждение удаления товара."""
     kb = InlineKeyboardMarkup(
@@ -114,11 +169,11 @@ def confirm_remove_kb(nm_id: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="✅ Да, удалить",
-                    callback_data=f"confirm_remove_{nm_id}"
+                    callback_data=f"confirm_remove:{nm_id}"
                 ),
                 InlineKeyboardButton(
                     text="❌ Отмена",
-                    callback_data="cancel_remove"
+                    callback_data="list_products"
                 ),
             ]
         ]
@@ -138,7 +193,7 @@ def reset_pvz_kb() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="🔙 Назад",
-                    callback_data="back_to_menu"
+                    callback_data="settings"
                 ),
             ],
         ]
@@ -147,15 +202,44 @@ def reset_pvz_kb() -> InlineKeyboardMarkup:
 
 
 def sizes_inline_kb(nm: int, sizes: list[dict]) -> InlineKeyboardMarkup:
-    """
-    Генерация inline-клавиатуры с размерами товара.
-
-    sizes: [{'name': 'M', 'origName': 'M'}, ...]
-    """
+    """Генерация inline-клавиатуры с размерами товара."""
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=s.get("name"), callback_data=f"select_size:{nm}:{s.get('name')}")]
+            [InlineKeyboardButton(
+                text=s.get("name"), 
+                callback_data=f"select_size:{nm}:{s.get('name')}"
+            )]
             for s in sizes
+        ]
+    )
+    return kb
+
+
+def back_to_settings_kb() -> InlineKeyboardMarkup:
+    """Кнопка возврата к настройкам."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="« Назад к настройкам",
+                    callback_data="settings"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def back_to_product_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Кнопка возврата к списку товаров."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="« Назад в карточку товара",
+                    callback_data=f"back_to_product:{nm_id}"
+                ),
+            ],
         ]
     )
     return kb

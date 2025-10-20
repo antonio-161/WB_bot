@@ -12,3 +12,7 @@ class SetDiscountState(StatesGroup):
 
 class SetPVZState(StatesGroup):
     waiting_for_address = State()
+
+
+class RenameProductState(StatesGroup):
+    waiting_for_name = State()

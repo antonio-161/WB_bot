@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # --- Logging ---
     LOG_LEVEL: str = Field("INFO", env="LOG_LEVEL")
 
+    # --- WB API ---
+    USE_XPOW: bool = Field(True, env="USE_XPOW")
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

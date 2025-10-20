@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from states.user_states import SetPVZState
 from services.db import DB
 from services.pvz_finder import get_dest_by_address
-from keyboards.kb import main_inline_kb, reset_pvz_kb
+from keyboards.kb import reset_pvz_kb, back_to_settings_kb
 import logging
 
 router = Router()
@@ -35,7 +35,8 @@ async def cb_set_pvz(query: CallbackQuery, state: FSMContext, db: DB):
         "• <code>Екатеринбург, ул. Мира, 5</code>\n\n"
         "💡 <b>Важно:</b> Адрес должен быть максимально точным, "
         "как вы вводите его при поиске ПВЗ на сайте WB."
-        f"{current_info}",
+        f"{current_info}\n\n"
+        "Отправьте /cancel для отмены.",
         parse_mode="HTML"
     )
 
@@ -43,17 +44,21 @@ async def cb_set_pvz(query: CallbackQuery, state: FSMContext, db: DB):
     await query.answer()
 
 
-
 @router.message(SetPVZState.waiting_for_address)
 async def process_pvz_address(message: Message, state: FSMContext, db: DB):
     """Обработка ввода адреса ПВЗ."""
+    if message.text == "/cancel":
+        await message.answer("❌ Установка ПВЗ отменена", reply_markup=back_to_settings_kb())
+        await state.clear()
+        return
+    
     address = message.text.strip()
 
     if len(address) < 5:
         await message.answer(
             "❌ Адрес слишком короткий.\n"
             "Введите полный адрес ПВЗ.",
-            reply_markup=main_inline_kb()
+            reply_markup=back_to_settings_kb()
         )
         await state.clear()
         return
@@ -82,7 +87,7 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
                 "2. Ввести адрес по-другому\n"
                 "3. Указать более точный адрес",
                 parse_mode="HTML",
-                reply_markup=main_inline_kb()
+                reply_markup=back_to_settings_kb()
             )
             await state.clear()
             return
@@ -97,7 +102,7 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
             f"🔢 <b>Код региона:</b> <code>{dest}</code>\n\n"
             f"Теперь все цены товаров будут отображаться для вашего региона доставки.",
             parse_mode="HTML",
-            reply_markup=main_inline_kb()
+            reply_markup=back_to_settings_kb()
         )
 
         logger.info(
@@ -112,7 +117,7 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
             "Не удалось определить пункт выдачи.\n"
             "Попробуйте позже или используйте другой адрес.",
             parse_mode="HTML",
-            reply_markup=main_inline_kb()
+            reply_markup=back_to_settings_kb()
         )
 
     await state.clear()
@@ -168,6 +173,6 @@ async def cb_reset_pvz(query: CallbackQuery, db: DB):
         "Установлен регион по умолчанию: <b>Москва</b>\n"
         f"Код региона: <code>{DEFAULT_DEST}</code>",
         parse_mode="HTML",
-        reply_markup=main_inline_kb()
+        reply_markup=back_to_settings_kb()
     )
     await query.answer("ПВЗ сброшен на Москву")

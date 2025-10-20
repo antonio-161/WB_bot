@@ -17,17 +17,30 @@ CREATE TABLE IF NOT EXISTS products (
     url_product TEXT NOT NULL,
     nm_id BIGINT NOT NULL,
     name_product TEXT DEFAULT 'Загрузка...',
+    custom_name TEXT DEFAULT NULL,              -- пользовательское название
     last_basic_price NUMERIC(10,2),
     last_product_price NUMERIC(10,2),
-    selected_size TEXT DEFAULT NULL,        -- выбранный размер для отслеживания
-    last_qty INT DEFAULT 0,                 -- последний известный остаток
-    out_of_stock BOOLEAN DEFAULT FALSE,     -- товар закончился
+    selected_size TEXT DEFAULT NULL,
+    last_qty INT DEFAULT 0,
+    out_of_stock BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
     UNIQUE(user_id, nm_id)
+);
+
+-- price_history: история изменений цен для графиков
+CREATE TABLE IF NOT EXISTS price_history (
+    id SERIAL PRIMARY KEY,
+    product_id INT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    basic_price NUMERIC(10,2) NOT NULL,
+    product_price NUMERIC(10,2) NOT NULL,
+    qty INT DEFAULT 0,
+    recorded_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Индексы для оптимизации
 CREATE INDEX IF NOT EXISTS idx_products_user_id ON products(user_id);
 CREATE INDEX IF NOT EXISTS idx_products_nm_id ON products(nm_id);
 CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at);
+CREATE INDEX IF NOT EXISTS idx_price_history_product_id ON price_history(product_id);
+CREATE INDEX IF NOT EXISTS idx_price_history_recorded_at ON price_history(recorded_at);

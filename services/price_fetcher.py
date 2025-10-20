@@ -18,6 +18,7 @@ async def get_product_data_async(
     session: aiohttp.ClientSession,
     nm_id: int,
     dest: Optional[int] = None,
+    xpow_token: Optional[str] = None,
 ) -> Dict:
     """Получаем все данные о товаре: цены, остатки, размеры."""
     if dest is None:
@@ -29,11 +30,25 @@ async def get_product_data_async(
     )
 
     headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/138.0.0.0 YaBrowser/25.8.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept-Encoding": "gzip, deflate, br",
         "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
         "Origin": "https://www.wildberries.ru",
+        "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
     }
+    
+    # Добавляем x-pow если есть
+    if xpow_token:
+        headers["x-pow"] = xpow_token
+        logger.debug(f"[nm={nm_id}] Используем x-pow токен")
 
     for attempt in range(3):
         try:
@@ -59,15 +74,24 @@ async def get_product_data_async(
 class PriceFetcher:
     """Менеджер для получения цен и остатков с rate limiting."""
 
-    def __init__(self, concurrency: int = 10, delay_range=(0.3, 0.8)):
+    def __init__(self, concurrency: int = 10, delay_range=(0.3, 0.8), use_xpow: bool = True):
         self.semaphore = asyncio.Semaphore(concurrency)
         self.delay_range = delay_range
         self._session: Optional[aiohttp.ClientSession] = None
+        self.use_xpow = use_xpow
+        self._xpow_fetcher = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
+    
+    async def _get_xpow_fetcher(self):
+        """Получить XPowFetcher если нужно."""
+        if self.use_xpow and self._xpow_fetcher is None:
+            from services.xpow_fetcher import get_xpow_fetcher
+            self._xpow_fetcher = await get_xpow_fetcher()
+        return self._xpow_fetcher
 
     async def close(self):
         if self._session and not self._session.closed:
@@ -79,9 +103,33 @@ class PriceFetcher:
         """Получение цены, остатка и размеров одним запросом."""
         async with self.semaphore:
             await asyncio.sleep(random.uniform(*self.delay_range))
+            
+            xpow_token = None
+            if self.use_xpow:
+                try:
+                    xpow_fetcher = await self._get_xpow_fetcher()
+                    if xpow_fetcher:
+                        # Пробуем основной метод
+                        xpow_token = await xpow_fetcher.get_xpow_token(nm_id, dest or DEFAULT_DEST)
+                        
+                        # Если не получилось - пробуем simple метод
+                        if not xpow_token:
+                            logger.debug(f"[nm={nm_id}] Пробуем simple метод получения x-pow")
+                            xpow_token = await xpow_fetcher.get_xpow_simple(nm_id, dest or DEFAULT_DEST)
+                        
+                        if xpow_token:
+                            logger.debug(f"[nm={nm_id}] X-pow токен получен")
+                        else:
+                            logger.warning(f"[nm={nm_id}] X-pow токен не получен, запрос без токена")
+                except Exception as e:
+                    logger.warning(f"[nm={nm_id}] Не удалось получить x-pow токен: {e}")
+            
             try:
                 session = await self._get_session()
-                data = await asyncio.wait_for(get_product_data_async(session, nm_id, dest), timeout=20)
+                data = await asyncio.wait_for(
+                    get_product_data_async(session, nm_id, dest, xpow_token), 
+                    timeout=20
+                )
 
                 # Подготавливаем удобный словарь
                 result = {
@@ -89,27 +137,20 @@ class PriceFetcher:
                     "sizes": []
                 }
 
+                # Обрабатываем размеры
                 for s in data.get("sizes", []):
+                    price_data = s.get("price", {})
+                    
                     size_info = {
-                        "name": s.get("name"),
-                        "origName": s.get("origName"),
+                        "name": s.get("name", ""),
+                        "origName": s.get("origName", ""),
                         "price": {
-                            "basic": Decimal(str(s.get("price", {}).get("basic", 0))) / 100,
-                            "product": Decimal(str(s.get("price", {}).get("product", 0))) / 100,
+                            "basic": Decimal(str(price_data.get("basic", 0))) / 100,
+                            "product": Decimal(str(price_data.get("product", 0))) / 100,
                         },
                         "stocks": [{"qty": stock.get("qty", 0)} for stock in s.get("stocks", [])]
                     }
                     result["sizes"].append(size_info)
-
-                # Если товар без размеров, создаем виртуальный размер
-                if not result["sizes"]:
-                    price_data = data.get("price", {})
-                    stocks_data = data.get("stocks", [])
-                    result["price"] = {
-                        "basic": Decimal(str(price_data.get("basic", 0))) / 100,
-                        "product": Decimal(str(price_data.get("product", 0))) / 100
-                    }
-                    result["stocks"] = [{"qty": stock.get("qty", 0)} for stock in stocks_data]
 
                 return result
 

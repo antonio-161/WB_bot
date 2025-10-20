@@ -10,7 +10,9 @@ charset-normalizer==3.4.4
 frozenlist==1.8.0
 idna==3.11
 magic-filter==1.0.12
+matplotlib==3.9.0
 multidict==6.7.0
+numpy==1.26.4
 playwright==1.40.0
 propcache==0.4.1
 pydantic==2.5.3
