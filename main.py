@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta
 import logging
 from aiogram import Bot, Dispatcher
 from aiogram import exceptions
@@ -11,7 +12,8 @@ from handlers import (
     start as start_h,
     products as products_h,
     settings as settings_h,
-    region as region_h
+    region as region_h,
+    stats as stats_h
 )
 from utils.wb_utils import apply_wallet_discount
 from constants import DEFAULT_DEST
@@ -109,7 +111,19 @@ async def monitor_loop(container: Container, bot: Bot):
                 else:
                     notify_price = True
 
-            notify_stock = old_qty is not None and old_qty > 0 and out_of_stock
+            # Проверка уведомлений о наличии (только для basic/pro)
+            user_plan = user.get("plan", "plan_free") if user else "plan_free"
+            notify_stock_out = False
+            notify_stock_in = False
+
+            if user_plan in ["plan_basic", "plan_pro"]:
+                # Товар закончился
+                if old_qty is not None and old_qty > 0 and out_of_stock:
+                    notify_stock_out = True
+                
+                # Товар появился
+                if old_qty is not None and old_qty == 0 and not out_of_stock and qty_total > 0:
+                    notify_stock_in = True
 
             # --- Сохраняем новые данные ---
             await container.db.update_prices_and_stock(
@@ -126,30 +140,55 @@ async def monitor_loop(container: Container, bot: Bot):
             msg = ""
             if notify_price:
                 discount = user.get("discount_percent", 0) if user else 0
-                price_no_wallet = new_prod
-                price_with_wallet = apply_wallet_discount(price_no_wallet, discount)
-                diff = old_prod - price_no_wallet
-                diff_percent = (diff / old_prod) * 100
+                
+                # Расчёт цен с учётом скидки
+                old_price_display = old_prod
+                new_price_display = new_prod
+                
+                if discount > 0:
+                    old_price_display = apply_wallet_discount(old_prod, discount)
+                    new_price_display = apply_wallet_discount(new_prod, discount)
+                
+                diff = old_price_display - new_price_display
+                diff_percent = (diff / old_price_display) * 100 if old_price_display > 0 else 0
 
                 msg += (
                     f"🔔 <b>Цена снизилась!</b>\n\n"
                     f"📦 {p.display_name}\n"
                     f"🔗 <a href='{p.url_product}'>Открыть товар</a>\n\n"
-                    f"💰 <b>Новая цена:</b> {price_no_wallet} ₽\n"
                 )
+                
                 if discount > 0:
-                    msg += f"💳 <b>С WB кошельком ({discount}%):</b> {price_with_wallet} ₽\n"
-                msg += (
-                    f"📉 <b>Было:</b> {old_prod} ₽\n"
-                    f"✅ <b>Экономия:</b> {diff} ₽ ({diff_percent:.1f}%)\n"
-                )
+                    msg += (
+                        f"💳 <b>Цена с WB кошельком ({discount}%):</b>\n"
+                        f"✅ <b>Сейчас:</b> {new_price_display} ₽\n"
+                        f"📉 <b>Было:</b> {old_price_display} ₽\n"
+                        f"💰 <b>Экономия:</b> {diff} ₽ ({diff_percent:.1f}%)\n\n"
+                        f"<i>Без кошелька: {new_prod} ₽ (было {old_prod} ₽)</i>\n"
+                    )
+                else:
+                    msg += (
+                        f"💰 <b>Новая цена:</b> {new_price_display} ₽\n"
+                        f"📉 <b>Было:</b> {old_price_display} ₽\n"
+                        f"✅ <b>Экономия:</b> {diff} ₽ ({diff_percent:.1f}%)\n"
+                    )
 
-            if notify_stock:
+            if notify_stock_out:
                 msg += (
-                    f"⚠️ <b>Товар закончился!</b>\n\n"
+                    f"\n⚠️ <b>Товар закончился!</b>\n\n"
                     f"📦 {p.display_name}\n"
                     f"🔗 <a href='{p.url_product}'>Открыть товар</a>\n"
                 )
+
+            if notify_stock_in:
+                msg += (
+                    f"\n✅ <b>Товар снова в наличии!</b>\n\n"
+                    f"📦 {p.display_name}\n"
+                    f"🔗 <a href='{p.url_product}'>Открыть товар</a>\n"
+                )
+
+                if user_plan == "plan_pro" and qty_total:
+                    msg += f"📦 <b>Остаток:</b> {qty_total} шт.\n"
 
             if msg:
                 try:
@@ -178,6 +217,7 @@ async def monitor_loop(container: Container, bot: Bot):
         try:
             logger.info("Начинаю цикл мониторинга...")
             products = await container.db.all_products()
+            logger.info(f"📊 Товаров в БД: {len(products)}")
             if not products:
                 logger.info("Нет товаров для мониторинга")
                 await asyncio.sleep(poll)
@@ -229,11 +269,59 @@ async def cleanup_old_data(container: Container):
     while True:
         try:
             await asyncio.sleep(86400)  # Раз в сутки
-            logger.info("Запуск очистки старой истории цен...")
-            await container.db.cleanup_old_history(days=90)
+            logger.info("Запуск очистки старых данных...")
+            
+            # Очистка истории
+            await container.db.cleanup_old_history_by_plan()
+            logger.info("✅ История цен очищена")
+            
+            # Удаление просроченных товаров для бесплатного тарифа
+            deleted = await container.db.cleanup_expired_products()
+            if deleted > 0:
+                logger.info(f"✅ Удалено {deleted} просроченных товаров (бесплатный тариф)")
+            
             logger.info("Очистка завершена")
         except Exception as e:
-            logger.exception(f"Ошибка при очистке истории: {e}")
+            logger.exception(f"Ошибка при очистке данных: {e}")
+
+
+async def auto_backup(container: Container):
+    """Автоматический бэкап БД каждую ночь."""
+    while True:
+        try:
+            # Ждём до 03:00
+            now = datetime.now()
+            target = now.replace(hour=3, minute=0, second=0, microsecond=0)
+            if now > target:
+                target += timedelta(days=1)
+            
+            wait_seconds = (target - now).total_seconds()
+            await asyncio.sleep(wait_seconds)
+            
+            logger.info("🔄 Запуск автоматического бэкапа...")
+            
+            # Выполняем бэкап через subprocess
+            import subprocess
+            result = subprocess.run(
+                ["bash", "scripts/backup.sh", f"auto_{datetime.now().strftime('%Y%m%d')}"],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                logger.info("✅ Автоматический бэкап выполнен успешно")
+                # Уведомляем админа
+                from aiogram import Bot
+                bot = Bot(token=settings.BOT_TOKEN)
+                await bot.send_message(
+                    settings.ADMIN_CHAT_ID,
+                    "✅ Автоматический бэкап БД выполнен успешно"
+                )
+            else:
+                logger.error(f"❌ Ошибка бэкапа: {result.stderr}")
+                
+        except Exception as e:
+            logger.exception(f"Ошибка при автоматическом бэкапе: {e}")
 
 
 async def main():
@@ -263,6 +351,7 @@ async def main():
     dp.include_router(products_h.router)
     dp.include_router(settings_h.router)
     dp.include_router(region_h.router)
+    dp.include_router(stats_h.router)
 
     # Dependency injection для handlers
     dp["db"] = db
@@ -275,6 +364,10 @@ async def main():
     # Запускаем очистку старых данных
     cleanup_task = asyncio.create_task(cleanup_old_data(container))
     logger.info("✅ Задача очистки данных запущена")
+
+    # Запускаем автоматический бэкап
+    backup_task = asyncio.create_task(auto_backup(container))
+    logger.info("✅ Задача автоматического бэкапа запущена")
 
     # Установка команд бота
     await bot.set_my_commands([
@@ -292,6 +385,7 @@ async def main():
     finally:
         monitor_task.cancel()
         cleanup_task.cancel()
+        backup_task.cancel()
         try:
             await monitor_task
         except asyncio.CancelledError:
@@ -300,6 +394,11 @@ async def main():
             await cleanup_task
         except asyncio.CancelledError:
             pass
+        try:
+            await backup_task
+        except asyncio.CancelledError:
+            pass
+
         
         # Закрываем XPowFetcher если используется
         try:

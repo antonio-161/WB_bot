@@ -14,7 +14,8 @@ plt.rcParams['font.family'] = 'DejaVu Sans'
 
 async def generate_price_graph(
     history: List[PriceHistoryRow],
-    product_name: str
+    product_name: str,
+    discount: int = 0
 ) -> io.BytesIO:
     """
     Генерирует график изменения цен.
@@ -31,13 +32,19 @@ async def generate_price_graph(
     
     # Разворачиваем историю (от старых к новым)
     history = list(reversed(history))
-    
+
     # Извлекаем данные
     dates = [h.recorded_at for h in history]
-    prices = [h.product_price for h in history]
-    
-    # Создаем график
-    fig, ax = plt.subplots(figsize=(12, 6))
+
+    # Применяем скидку если есть
+    if discount > 0:
+        from utils.wb_utils import apply_wallet_discount
+        prices = [apply_wallet_discount(h.product_price, discount) for h in history]
+    else:
+        prices = [h.product_price for h in history]
+        
+        # Создаем график
+        fig, ax = plt.subplots(figsize=(12, 6))
     
     # Рисуем линию цены
     ax.plot(dates, prices, marker='o', linewidth=2, markersize=4, color='#2196F3')
@@ -47,7 +54,8 @@ async def generate_price_graph(
     
     # Настройка осей
     ax.set_xlabel('Дата', fontsize=11)
-    ax.set_ylabel('Цена, ₽', fontsize=11)
+    ylabel = f'Цена с WB кошельком ({discount}%), ₽' if discount > 0 else 'Цена, ₽'
+    ax.set_ylabel(ylabel, fontsize=11)
     ax.set_title(f'График цен: {product_name[:50]}', fontsize=13, fontweight='bold')
     
     # Форматирование дат на оси X

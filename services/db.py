@@ -4,6 +4,8 @@ import asyncpg
 from pydantic import BaseModel
 from datetime import datetime
 
+from utils.decorators import retry_on_error
+
 
 class ProductRow(BaseModel):
     """Модель продукта."""
@@ -104,6 +106,7 @@ class DB:
             )
 
     # --- Products ---
+    @retry_on_error(max_attempts=3, delay=0.5)
     async def add_product(
             self, user_id: int, url_product: str, nm_id: int,
             name_product: str = "Загрузка...", selected_size: Optional[str] = None
@@ -153,6 +156,7 @@ class DB:
             )
             return [ProductRow(**dict(r)) for r in rows]
 
+    @retry_on_error(max_attempts=3, delay=0.5)
     async def update_prices_and_stock(
             self,
             product_id: int,
@@ -225,6 +229,7 @@ class DB:
             )
 
     # --- Price History ---
+    @retry_on_error(max_attempts=3, delay=0.5)
     async def add_price_history(
             self, product_id: int, basic: int, product: int, qty: int = 0
     ):
@@ -251,13 +256,43 @@ class DB:
             )
             return [PriceHistoryRow(**dict(r)) for r in rows]
 
-    async def cleanup_old_history(self, days: int = 90):
-        """Удалить историю старше N дней."""
+    async def cleanup_old_history_by_plan(self):
+        """Удалить историю согласно тарифам пользователей."""
         async with self.pool.acquire() as conn:
+            # Для бесплатного тарифа — 1 месяц (30 дней)
             await conn.execute(
-                """DELETE FROM price_history
-                   WHERE recorded_at < now() - interval '%s days'""",
-                days
+                """DELETE FROM price_history ph
+                WHERE ph.id IN (
+                    SELECT ph2.id FROM price_history ph2
+                    JOIN products p ON ph2.product_id = p.id
+                    JOIN users u ON p.user_id = u.id
+                    WHERE u.plan = 'plan_free' 
+                    AND ph2.recorded_at < now() - interval '30 days'
+                )"""
+            )
+            
+            # Для базового — 3 месяца (90 дней)
+            await conn.execute(
+                """DELETE FROM price_history ph
+                WHERE ph.id IN (
+                    SELECT ph2.id FROM price_history ph2
+                    JOIN products p ON ph2.product_id = p.id
+                    JOIN users u ON p.user_id = u.id
+                    WHERE u.plan = 'plan_basic' 
+                    AND ph2.recorded_at < now() - interval '90 days'
+                )"""
+            )
+            
+            # Для продвинутого — 12 месяцев (365 дней)
+            await conn.execute(
+                """DELETE FROM price_history ph
+                WHERE ph.id IN (
+                    SELECT ph2.id FROM price_history ph2
+                    JOIN products p ON ph2.product_id = p.id
+                    JOIN users u ON p.user_id = u.id
+                    WHERE u.plan = 'plan_pro' 
+                    AND ph2.recorded_at < now() - interval '365 days'
+                )"""
             )
 
     async def set_notify_settings(
@@ -270,3 +305,18 @@ class DB:
                 mode, value, product_id
             )
 
+    async def cleanup_expired_products(self):
+        """Удалить товары старше 3 месяцев для бесплатного тарифа."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                """DELETE FROM products
+                WHERE id IN (
+                    SELECT p.id FROM products p
+                    JOIN users u ON p.user_id = u.id
+                    WHERE u.plan = 'plan_free' 
+                    AND p.created_at < now() - interval '90 days'
+                )"""
+            )
+            # Извлекаем количество удалённых строк
+            deleted_count = int(result.split()[-1]) if result else 0
+            return deleted_count

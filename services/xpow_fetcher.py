@@ -8,6 +8,8 @@ from typing import Optional
 from playwright.async_api import async_playwright
 import time
 
+from utils.decorators import retry_on_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,6 +48,7 @@ class XPowFetcher:
             self._page = None
             logger.info("Playwright браузер закрыт")
     
+    @retry_on_error(max_attempts=3, delay=2)
     async def get_xpow_token(self, nm_id: int, dest: int) -> Optional[str]:
         """
         Получить x-pow токен для запроса к WB API.

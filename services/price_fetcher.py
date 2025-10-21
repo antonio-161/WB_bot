@@ -4,6 +4,8 @@ import random
 from typing import Dict, Optional
 import aiohttp
 from constants import DEFAULT_DEST
+from utils.cache import product_cache
+from utils.decorators import retry_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +98,20 @@ class PriceFetcher:
         if self._session and not self._session.closed:
             await self._session.close()
 
+    @retry_on_error(max_attempts=3, delay=2, exceptions=(PriceFetchError,))
     async def get_product_data(
         self, nm_id: int, dest: Optional[int] = None
     ) -> Optional[Dict]:
-        """Получение цены, остатка и размеров одним запросом."""
+        """Получение данных с кэшированием."""
+
+        # Проверяем кэш
+        cache_key = f"product_{nm_id}_{dest or DEFAULT_DEST}"
+        cached = product_cache.get(cache_key)
+        
+        if cached:
+            logger.debug(f"[nm={nm_id}] Данные из кэша")
+            return cached
+    
         async with self.semaphore:
             await asyncio.sleep(random.uniform(*self.delay_range))
             
@@ -150,6 +162,9 @@ class PriceFetcher:
                         "stocks": [{"qty": stock.get("qty", 0)} for stock in s.get("stocks", [])]
                     }
                     result["sizes"].append(size_info)
+
+                if result:
+                    product_cache.set(cache_key, result)
 
                 return result
 

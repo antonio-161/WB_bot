@@ -25,8 +25,14 @@ def main_inline_kb() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
-                    text="📊 Экспорт в Excel",
-                    callback_data="export_excel"
+                    text="📋 Экспорт данных",
+                    callback_data="export_menu"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 Моя статистика",
+                    callback_data="my_stats"
                 ),
             ],
             [
@@ -304,6 +310,110 @@ def upgrade_plan_kb() -> InlineKeyboardMarkup:
                     callback_data="upgrade_plan"
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data="back_to_menu"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def export_format_kb() -> InlineKeyboardMarkup:
+    """Выбор формата экспорта."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📗 Excel (.xlsx)",
+                    callback_data="export_excel"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📄 CSV (.csv)",
+                    callback_data="export_csv"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад",
+                    callback_data="back_to_menu"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def plan_detail_kb(plan_key: str) -> InlineKeyboardMarkup:
+    """Клавиатура детального описания тарифа."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Выбрать этот тариф",
+                    callback_data=f"confirm_{plan_key}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="« Назад к выбору",
+                    callback_data="back_to_plan_choice"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def onboarding_discount_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для настройки скидки при онбординге."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Установить скидку",
+                    callback_data="onboarding_set_discount"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏭ Пропустить",
+                    callback_data="onboarding_skip_discount"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def onboarding_pvz_kb() -> InlineKeyboardMarkup:
+    """Клавиатура для настройки ПВЗ при онбординге."""
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📍 Установить ПВЗ",
+                    callback_data="onboarding_set_pvz"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="⏭ Пропустить (Москва)",
+                    callback_data="onboarding_skip_pvz"
+                ),
+            ],
+        ]
+    )
+    return kb
+
+
+def back_to_menu_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="« Назад",

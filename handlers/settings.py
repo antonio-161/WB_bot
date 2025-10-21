@@ -4,10 +4,84 @@ from aiogram.fsm.context import FSMContext
 from states.user_states import SetDiscountState
 from services.db import DB
 from keyboards.kb import (
-    settings_kb, back_to_settings_kb, upgrade_plan_kb, choose_plan_kb
+    settings_kb, back_to_settings_kb, upgrade_plan_kb, choose_plan_kb,
+    main_inline_kb, onboarding_pvz_kb
 )
 
 router = Router()
+
+
+async def start_onboarding(message, db: DB, user_id: int, plan_key: str):
+    """Начать процесс онбординга нового пользователя."""
+    from keyboards.kb import onboarding_discount_kb
+
+    await message.answer(
+        "🎯 <b>Настройка отслеживания</b>\n\n"
+        "Для более точного расчёта цен установите скидку вашего WB кошелька.\n\n"
+        "💡 Найти можно в приложении WB → Профиль → WB Кошелёк",
+        parse_mode="HTML",
+        reply_markup=onboarding_discount_kb()
+    )
+
+
+@router.callback_query(F.data == "onboarding_set_discount")
+async def onboarding_discount(query: CallbackQuery, state: FSMContext):
+    """Установка скидки в процессе онбординга."""
+    await query.message.edit_text(
+        "💳 <b>Установка скидки WB кошелька</b>\n\n"
+        "Введите размер скидки в процентах (целое число от 0 до 100).\n"
+        "Например: <code>7</code>\n\n"
+        "Отправьте /cancel для отмены.",
+        parse_mode="HTML"
+    )
+    await state.set_state(SetDiscountState.waiting_for_discount)
+    await state.update_data(onboarding=True)
+    await query.answer()
+
+
+@router.callback_query(F.data == "onboarding_skip_discount")
+async def onboarding_skip_discount(query: CallbackQuery, db: DB):
+    """Пропуск установки скидки."""
+    user = await db.get_user(query.from_user.id)
+    plan = user.get("plan", "plan_free") if user else "plan_free"
+
+    if plan in ["plan_basic", "plan_pro"]:
+        await query.message.edit_text(
+            "📍 <b>Настройка региона</b>\n\n"
+            "Установите ваш пункт выдачи для точного отображения цен и остатков.\n\n"
+            "💡 По умолчанию используется Москва",
+            parse_mode="HTML",
+            reply_markup=onboarding_pvz_kb()
+        )
+    else:
+        await query.message.edit_text(
+            "✅ <b>Настройка завершена!</b>\n\n"
+            "Теперь вы можете добавлять товары для отслеживания 👇",
+            parse_mode="HTML",
+            reply_markup=main_inline_kb()
+        )
+    await query.answer()
+
+
+@router.callback_query(F.data == "onboarding_set_pvz")
+async def onboarding_pvz(query: CallbackQuery, state: FSMContext):
+    """Установка ПВЗ в процессе онбординга."""
+    from handlers.region import cb_set_pvz
+    await state.update_data(onboarding=True)
+    await cb_set_pvz(query, state, query.bot.get("db"))
+
+
+@router.callback_query(F.data == "onboarding_skip_pvz")
+async def onboarding_skip_pvz(query: CallbackQuery):
+    """Пропуск установки ПВЗ."""
+    await query.message.edit_text(
+        "✅ <b>Настройка завершена!</b>\n\n"
+        "Используется регион: <b>Москва</b>\n\n"
+        "Теперь вы можете добавлять товары для отслеживания 👇",
+        parse_mode="HTML",
+        reply_markup=main_inline_kb()
+    )
+    await query.answer()
 
 
 @router.callback_query(F.data == "settings")
@@ -103,6 +177,30 @@ async def process_discount(message: Message, state: FSMContext, db: DB):
         parse_mode="HTML",
         reply_markup=back_to_settings_kb()
     )
+    data = await state.get_data()
+    is_onboarding = data.get("onboarding", False)
+
+    if is_onboarding:
+        user = await db.get_user(message.from_user.id)
+        plan = user.get("plan", "plan_free") if user else "plan_free"
+
+        if plan in ["plan_basic", "plan_pro"]:
+            
+            await message.answer(
+                "📍 <b>Настройка региона</b>\n\n"
+                "Установите ваш пункт выдачи для точного отображения цен и остатков.\n\n"
+                "💡 По умолчанию используется Москва",
+                parse_mode="HTML",
+                reply_markup=onboarding_pvz_kb()
+            )
+        else:
+            await message.answer(
+                "✅ <b>Настройка завершена!</b>\n\n"
+                "Теперь вы можете добавлять товары для отслеживания 👇",
+                parse_mode="HTML",
+                reply_markup=main_inline_kb()
+            )
+
     await state.clear()
 
 

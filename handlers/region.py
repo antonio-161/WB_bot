@@ -4,7 +4,8 @@ from aiogram.fsm.context import FSMContext
 from states.user_states import SetPVZState
 from services.db import DB
 from services.pvz_finder import get_dest_by_address
-from keyboards.kb import reset_pvz_kb, back_to_settings_kb
+from keyboards.kb import reset_pvz_kb, back_to_settings_kb, main_inline_kb
+from utils.decorators import require_plan
 import logging
 
 router = Router()
@@ -12,9 +13,9 @@ logger = logging.getLogger(__name__)
 
 
 @router.callback_query(F.data == "set_pvz")
+@require_plan(['plan_basic', 'plan_pro'], "⛔ Установка ПВЗ доступна только на платных тарифах")
 async def cb_set_pvz(query: CallbackQuery, state: FSMContext, db: DB):
     """Начало установки ПВЗ через callback."""
-
     user = await db.get_user(query.from_user.id)
 
     current_dest = user.get('dest') if user else None
@@ -118,6 +119,17 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
             "Попробуйте позже или используйте другой адрес.",
             parse_mode="HTML",
             reply_markup=back_to_settings_kb()
+        )
+
+    data = await state.get_data()
+    is_onboarding = data.get("onboarding", False)
+
+    if is_onboarding:
+        await message.answer(
+            "✅ <b>Настройка завершена!</b>\n\n"
+            "Теперь вы можете добавлять товары для отслеживания 👇",
+            parse_mode="HTML",
+            reply_markup=main_inline_kb()
         )
 
     await state.clear()

@@ -7,8 +7,10 @@ from services.price_fetcher import PriceFetcher
 from utils.wb_utils import extract_nm_id
 from keyboards.kb import (
     products_inline, main_inline_kb, sizes_inline_kb,
-    product_detail_kb, confirm_remove_kb, back_to_product_kb, notify_mode_kb
+    product_detail_kb, confirm_remove_kb, back_to_product_kb, notify_mode_kb,
+    export_format_kb
 )
+from utils.decorators import require_plan
 from utils.graph_generator import generate_price_graph
 import logging
 from utils.export_utils import generate_excel, generate_csv
@@ -306,12 +308,21 @@ async def cb_product_detail(query: CallbackQuery, db: DB):
             text += f"💳 С кошельком ({discount}%): <b>{final_price} ₽</b>\n"
         else:
             text += f"💰 Текущая цена: <b>{price} ₽</b>\n"
-    
+
+    # Проверяем тариф для отображения остатков
     if product.last_qty is not None:
-        if product.out_of_stock:
-            text += f"📦 Остаток: <b>Нет в наличии</b>\n"
+        if user and user.get("plan") == "plan_pro":
+            # Только для продвинутого тарифа показываем количество
+            if product.out_of_stock:
+                text += f"📦 Остаток: <b>Нет в наличии</b>\n"
+            else:
+                text += f"📦 Остаток: <b>{product.last_qty} шт.</b>\n"
         else:
-            text += f"📦 Остаток: <b>{product.last_qty} шт.</b>\n"
+            # Для остальных тарифов — только наличие/отсутствие
+            if product.out_of_stock:
+                text += f"📦 <b>Нет в наличии</b>\n"
+            else:
+                text += f"📦 <b>В наличии</b>\n"
 
     # Статистика из истории
     if history:
@@ -372,8 +383,12 @@ async def cb_show_graph(query: CallbackQuery, db: DB):
     await query.answer("⏳ Генерирую график...")
 
     try:
+        # Получаем скидку пользователя
+        user = await db.get_user(query.from_user.id)
+        discount = user.get("discount_percent", 0) if user else 0
+
         # Генерируем график
-        graph_buffer = await generate_price_graph(history, product.display_name)
+        graph_buffer = await generate_price_graph(history, product.display_name, discount)
 
         # Отправляем как фото
         photo = BufferedInputFile(graph_buffer.read(), filename=f"price_graph_{nm_id}.png")
@@ -401,6 +416,7 @@ async def cb_show_graph(query: CallbackQuery, db: DB):
 
 # ---------------- Переименование товара ----------------
 @router.callback_query(F.data.startswith("rename:"))
+@require_plan(['plan_basic', 'plan_pro'], "⛔ Переименование доступно только на платных тарифах")
 async def cb_rename_start(query: CallbackQuery, state: FSMContext, db: DB):
     """Начать переименование товара."""
     nm_id = int(query.data.split(":", 1)[1])
@@ -580,8 +596,10 @@ async def cb_back_to_menu(query: CallbackQuery):
 
 # ---------------- Настройка уведомлений ----------------
 @router.callback_query(F.data.startswith("notify_settings:"))
+@require_plan(['plan_basic', 'plan_pro'], "⛔ Гибкие уведомления доступны с тарифа Базовый")
 async def cb_notify_settings(query: CallbackQuery, db: DB):
     """Показать меню настройки уведомлений."""
+
     nm_id = int(query.data.split(":", 1)[1])
     
     product = await db.get_product_by_nm(query.from_user.id, nm_id)
@@ -728,7 +746,28 @@ async def process_notify_value(message: Message, state: FSMContext, db: DB):
 
 
 # ---------------- Экспорт данных ----------------
+@router.callback_query(F.data == "export_menu")
+@require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
+async def cb_export_menu(query: CallbackQuery, db: DB):
+    """Меню выбора формата экспорта."""
+    products = await db.list_products(query.from_user.id)
+    
+    if not products:
+        await query.answer("📭 Нет товаров для экспорта", show_alert=True)
+        return
+    
+    await query.message.edit_text(
+        f"📊 <b>Экспорт товаров</b>\n\n"
+        f"📦 Всего товаров: {len(products)}\n\n"
+        f"Выберите формат файла:",
+        parse_mode="HTML",
+        reply_markup=export_format_kb()
+    )
+    await query.answer()
+
+
 @router.callback_query(F.data == "export_excel")
+@require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
 async def cb_export_excel(query: CallbackQuery, db: DB):
     """Выгрузка товаров в Excel."""
     products = await db.list_products(query.from_user.id)
@@ -781,6 +820,7 @@ async def cb_export_excel(query: CallbackQuery, db: DB):
 
 
 @router.callback_query(F.data == "export_csv")
+@require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
 async def cb_export_csv(query: CallbackQuery, db: DB):
     """Выгрузка товаров в CSV."""
     products = await db.list_products(query.from_user.id)
