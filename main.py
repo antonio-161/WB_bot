@@ -13,7 +13,8 @@ from handlers import (
     products as products_h,
     settings as settings_h,
     region as region_h,
-    stats as stats_h
+    stats as stats_h,
+    onboarding as onboarding_h
 )
 from utils.wb_utils import apply_wallet_discount
 from constants import DEFAULT_DEST
@@ -352,6 +353,7 @@ async def main():
     dp.include_router(settings_h.router)
     dp.include_router(region_h.router)
     dp.include_router(stats_h.router)
+    dp.include_router(onboarding_h.router)
 
     # Dependency injection для handlers
     dp["db"] = db

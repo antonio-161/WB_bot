@@ -1,14 +1,14 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from states.user_states import AddProductState, RenameProductState, SetNotifyState
 from services.db import DB
 from services.price_fetcher import PriceFetcher
-from utils.wb_utils import extract_nm_id
+from utils.wb_utils import extract_nm_id, apply_wallet_discount
 from keyboards.kb import (
     products_inline, main_inline_kb, sizes_inline_kb,
     product_detail_kb, confirm_remove_kb, back_to_product_kb, notify_mode_kb,
-    export_format_kb
+    export_format_kb, onboarding_kb, upsell_kb
 )
 from utils.decorators import require_plan
 from utils.graph_generator import generate_price_graph
@@ -78,7 +78,7 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
 
         product_name = product_data.get("name", f"Товар {nm}")
         sizes = product_data.get("sizes", [])
-        
+
         # Формируем URL товара
         url = f"https://www.wildberries.ru/catalog/{nm}/detail.aspx"
 
@@ -87,7 +87,7 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
         if sizes:
             valid_sizes = [
                 s for s in sizes 
-                if s.get("name") not in ("", "0", None) 
+                if s.get("name") not in ("", "0", None)
                 and s.get("origName") not in ("", "0", None)
             ]
 
@@ -121,7 +121,7 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
             price_basic = price_info.get("basic", 0)
             price_product = price_info.get("product", 0)
             qty = sum(stock.get("qty", 0) for stock in size_data.get("stocks", []))
-            
+
             await db.update_prices_and_stock(
                 product_id=product_id,
                 basic=price_basic,
@@ -129,31 +129,52 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
                 last_qty=qty,
                 out_of_stock=(qty == 0)
             )
-            
+
             # Добавляем первую запись в историю
             await db.add_price_history(product_id, price_basic, price_product, qty)
 
             # Получаем скидку пользователя для отображения
             user = await db.get_user(message.from_user.id)
             discount = user.get("discount_percent", 0) if user else 0
-            
+
             display_price = int(price_product)
             price_text = f"💰 Текущая цена: {display_price} ₽"
-            
+
             if discount > 0:
-                from utils.wb_utils import apply_wallet_discount
                 final_price = apply_wallet_discount(display_price, discount)
                 price_text = f"💰 Цена: {display_price} ₽\n💳 С кошельком ({discount}%): {int(final_price)} ₽"
 
-            await status_msg.edit_text(
-                f"✅ <b>Товар добавлен!</b>\n\n"
-                f"📦 {product_name}\n"
-                f"🔢 Артикул: <code>{nm}</code>\n"
-                f"{price_text}\n\n"
-                "Я буду отслеживать изменения цены.",
-                reply_markup=main_inline_kb(),
-                parse_mode="HTML"
-            )
+            # Проверяем, это онбординг или обычное добавление
+            data = await state.get_data()
+            is_onboarding = data.get("onboarding", False)
+
+            if is_onboarding:
+                # Онбординг: показываем ценность + предлагаем тариф
+                await status_msg.edit_text(
+                    f"🎉 <b>Отлично! Товар добавлен</b>\n\n"
+                    f"📦 {product_name}\n"
+                    f"🔢 Артикул: <code>{nm}</code>\n"
+                    f"{price_text}\n\n"
+                    "✅ Теперь я буду отслеживать цену каждый день\n"
+                    "🔔 Вы получите уведомление при снижении\n\n"
+                    "💡 <b>Что дальше?</b>\n"
+                    "🎁 У вас ещё <b>4 бесплатных слота</b>\n"
+                    "Добавьте больше товаров или выберите тариф для расширения возможностей 👇",
+                    reply_markup=onboarding_kb(),
+                    parse_mode="HTML"
+                )
+            else:
+                # Обычное добавление
+                await status_msg.edit_text(
+                    f"✅ <b>Товар добавлен!</b>\n\n"
+                    f"📦 {product_name}\n"
+                    f"🔢 Артикул: <code>{nm}</code>\n"
+                    f"{price_text}\n\n"
+                    "Я буду отслеживать изменения цены.",
+                    reply_markup=main_inline_kb(),
+                    parse_mode="HTML"
+                )
+
             await state.clear()
 
     except Exception as e:
@@ -230,53 +251,448 @@ async def select_size_cb(query: CallbackQuery, state: FSMContext, db: DB, price_
 # ---------------- Список товаров ----------------
 @router.callback_query(F.data == "list_products")
 async def cb_list_products(query: CallbackQuery, db: DB):
-    """Список отслеживаемых товаров."""
+    """Улучшенный список отслеживаемых товаров с аналитикой."""
+    
     products = await db.list_products(query.from_user.id)
     
     if not products:
         await query.message.edit_text(
-            "📭 Список пуст.\n"
-            "Добавьте товар для отслеживания!",
-            reply_markup=main_inline_kb()
+            "📭 <b>Список пуст</b>\n\n"
+            "Вы ещё не добавили товары для отслеживания.\n\n"
+            "💡 Добавьте первый товар, чтобы начать экономить!",
+            parse_mode="HTML",
+            reply_markup=products_inline()
         )
         await query.answer()
         return
-
-    # Получаем скидку пользователя
+    
+    # Получаем данные пользователя
     user = await db.get_user(query.from_user.id)
     discount = user.get("discount_percent", 0) if user else 0
-
-    text = "📦 <b>Отслеживаемые товары:</b>\n\n"
-    products_data = []
-
-    for i, p in enumerate(products, 1):
-        display_name = p.display_name
-        price_info = ""
+    plan = user.get("plan", "plan_free")
+    max_links = user.get("max_links", 5)
+    
+    # ===== АНАЛИТИКА ТОВАРОВ =====
+    products_with_analytics = []
+    total_current_price = 0
+    total_potential_savings = 0
+    best_deal = None
+    best_deal_percent = 0
+    
+    for p in products:
+        # Получаем историю для анализа
+        history = await db.get_price_history(p.id, limit=30)
+        
+        analytics = {
+            "product": p,
+            "trend": "neutral",  # up, down, neutral
+            "savings_percent": 0,
+            "savings_amount": 0,
+            "has_history": len(history) >= 2
+        }
+        
+        if len(history) >= 2:
+            prices = [h.product_price for h in history]
+            max_price = max(prices)
+            min_price = min(prices)
+            current_price = p.last_product_price or max_price
+            
+            # Расчёт экономии
+            savings = max_price - current_price
+            if savings > 0 and max_price > 0:
+                savings_percent = (savings / max_price) * 100
+                analytics["savings_percent"] = savings_percent
+                analytics["savings_amount"] = savings
+                
+                # Лучшая сделка
+                if savings_percent > best_deal_percent:
+                    best_deal_percent = savings_percent
+                    best_deal = p
+            
+            # Тренд (последние 3 записи)
+            recent_prices = [h.product_price for h in history[:3]]
+            if len(recent_prices) >= 2:
+                if recent_prices[0] < recent_prices[-1]:
+                    analytics["trend"] = "down"  # Цена падает
+                elif recent_prices[0] > recent_prices[-1]:
+                    analytics["trend"] = "up"    # Цена растёт
+            
+            total_potential_savings += savings
+        
         if p.last_product_price:
-            price = p.last_product_price
-            if discount > 0:
-                from utils.wb_utils import apply_wallet_discount
-                final_price = apply_wallet_discount(price, discount)
-                price_info = f" — {final_price} ₽"
-            else:
-                price_info = f" — {price} ₽"
-
-        text += f'{i}. {display_name[:45]}{price_info}\n'
-        products_data.append({"nm_id": p.nm_id, "name": display_name})
-
+            total_current_price += p.last_product_price
+        
+        products_with_analytics.append(analytics)
+    
+    # ===== СОРТИРОВКА ПО ВЫГОДНОСТИ =====
+    products_with_analytics.sort(
+        key=lambda x: x["savings_percent"], 
+        reverse=True
+    )
+    
+    # ===== ФОРМИРУЕМ СООБЩЕНИЕ =====
+    
+    # Заголовок с общей статистикой
+    text = "📦 <b>Ваши товары</b>\n"
+    text += f"{'═'*25}\n\n"
+    
+    # Мини-дашборд
+    text += f"📊 Товаров: <b>{len(products)}/{max_links}</b>\n"
+    
     if discount > 0:
-        text += f"\n💳 <i>Цены с учётом скидки кошелька {discount}%</i>"
-
+        total_with_discount = sum(
+            apply_wallet_discount(p.last_product_price or 0, discount) 
+            for p in products
+        )
+        text += f"💰 Общая стоимость: <b>{total_with_discount}₽</b> (с WB кошельком)\n"
+    else:
+        text += f"💰 Общая стоимость: <b>{total_current_price}₽</b>\n"
+    
+    if total_potential_savings > 0:
+        text += f"💎 Можно сэкономить: <b>{total_potential_savings}₽</b>\n"
+    
+    text += "\n"
+    
+    # Лучшая сделка (если есть)
+    if best_deal:
+        text += (
+            f"🔥 <b>Лучшая сделка сейчас:</b>\n"
+            f"{best_deal.display_name[:35]}...\n"
+            f"└ Скидка {best_deal_percent:.0f}% от пика цены!\n\n"
+        )
+    
+    # Сортировка и фильтры
+    text += "📋 <b>Список товаров:</b>\n"
+    text += "<i>Отсортировано по выгодности</i>\n\n"
+    
+    # ===== СПИСОК ТОВАРОВ =====
+    products_data = []
+    
+    for i, item in enumerate(products_with_analytics[:10], 1):  # Показываем топ-10
+        p = item["product"]
+        
+        # Эмодзи статуса
+        if item["savings_percent"] >= 30:
+            status_emoji = "🔥"
+        elif item["savings_percent"] >= 15:
+            status_emoji = "💰"
+        elif item["trend"] == "down":
+            status_emoji = "📉"
+        elif item["trend"] == "up":
+            status_emoji = "📈"
+        else:
+            status_emoji = "📦"
+        
+        # Наличие
+        stock_emoji = "✅" if not p.out_of_stock else "❌"
+        
+        # Название
+        display_name = p.display_name[:30]
+        if len(p.display_name) > 30:
+            display_name += "..."
+        
+        # Цена
+        if p.last_product_price:
+            if discount > 0:
+                final_price = apply_wallet_discount(p.last_product_price, discount)
+                price_str = f"{final_price}₽"
+            else:
+                price_str = f"{p.last_product_price}₽"
+        else:
+            price_str = "—"
+        
+        # Экономия
+        if item["savings_percent"] > 0:
+            savings_str = f" (-{item['savings_percent']:.0f}%)"
+        else:
+            savings_str = ""
+        
+        text += f"{status_emoji} <b>{i}.</b> {display_name}\n"
+        text += f"   {stock_emoji} {price_str}{savings_str}\n"
+        
+        products_data.append({
+            "nm_id": p.nm_id,
+            "name": display_name
+        })
+    
+    # Если товаров больше 10
+    if len(products_with_analytics) > 10:
+        text += f"\n<i>... и ещё {len(products_with_analytics) - 10} товаров</i>\n"
+    
+    # ===== ПОДСКАЗКИ И МОТИВАЦИЯ =====
+    text += "\n💡 <b>Подсказки:</b>\n"
+    
+    # Подсказка о наличии
+    out_of_stock_count = sum(1 for p in products if p.out_of_stock)
+    if out_of_stock_count > 0:
+        text += f"• {out_of_stock_count} товар(ов) нет в наличии\n"
+    
+    # Подсказка о лимите
+    if plan == "plan_free" and len(products) >= max_links - 1:
+        text += f"• Осталось {max_links - len(products)} слот(ов)\n"
+    
+    # Подсказка об апгрейде
+    if plan == "plan_free" and len(products) >= 3:
+        text += "• 💎 Улучшите тариф для отслеживания до 50 товаров\n"
+    
+    # ===== КНОПКИ ДЕЙСТВИЙ =====
+    keyboard_rows = []
+    
+    # Фильтры (для платных тарифов)
+    if plan in ["plan_basic", "plan_pro"]:
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text="🔥 Лучшие скидки",
+                callback_data="filter_best_deals"
+            ),
+            InlineKeyboardButton(
+                text="📉 Падающие цены",
+                callback_data="filter_price_drops"
+            )
+        ])
+    
+    # Основные действия
+    keyboard_rows.extend([
+        [
+            InlineKeyboardButton(
+                text="➕ Добавить товар",
+                callback_data="add_product"
+            ),
+            InlineKeyboardButton(
+                text="🗑 Удалить товар",
+                callback_data="remove_product"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 Показать все детально",
+                callback_data="show_detailed_list"
+            )
+        ]
+    ])
+    
+    # Экспорт (только для Pro)
+    if plan == "plan_pro":
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text="📋 Экспорт в Excel/CSV",
+                callback_data="export_menu"
+            )
+        ])
+    
+    # Апгрейд для бесплатного тарифа
+    if plan == "plan_free" and len(products) >= 3:
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text="🚀 Улучшить тариф (до 50 товаров)",
+                callback_data="upsell_from_products_list"
+            )
+        ])
+    
+    keyboard_rows.append([
+        InlineKeyboardButton(
+            text="« Назад",
+            callback_data="back_to_menu"
+        )
+    ])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    
     await query.message.edit_text(
         text,
-        reply_markup=products_inline(products_data),
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+    await query.answer()
+
+
+# ===== ФИЛЬТРЫ =====
+
+@router.callback_query(F.data == "filter_best_deals")
+async def filter_best_deals(query: CallbackQuery, db: DB):
+    """Показать только товары с лучшими скидками."""
+    
+    products = await db.list_products(query.from_user.id)
+    user = await db.get_user(query.from_user.id)
+    discount = user.get("discount_percent", 0) if user else 0
+    
+    # Фильтруем товары со скидкой >= 15%
+    filtered = []
+    for p in products:
+        history = await db.get_price_history(p.id, limit=30)
+        if len(history) >= 2:
+            prices = [h.product_price for h in history]
+            max_price = max(prices)
+            current = p.last_product_price or max_price
+            
+            if max_price > 0:
+                savings_percent = ((max_price - current) / max_price) * 100
+                if savings_percent >= 15:
+                    filtered.append((p, savings_percent))
+    
+    if not filtered:
+        await query.answer(
+            "😔 Сейчас нет товаров со значительными скидками.\n"
+            "Продолжайте мониторинг!",
+            show_alert=True
+        )
+        return
+    
+    # Сортируем по скидке
+    filtered.sort(key=lambda x: x[1], reverse=True)
+    
+    text = (
+        "🔥 <b>Лучшие скидки сейчас</b>\n"
+        f"{'═'*25}\n\n"
+        f"Найдено товаров: <b>{len(filtered)}</b>\n\n"
+    )
+    
+    products_data = []
+    for i, (p, savings_percent) in enumerate(filtered[:15], 1):
+        display_name = p.display_name[:35]
+        if len(p.display_name) > 35:
+            display_name += "..."
+        
+        if p.last_product_price:
+            if discount > 0:
+                final_price = apply_wallet_discount(p.last_product_price, discount)
+                price_str = f"{final_price}₽"
+            else:
+                price_str = f"{p.last_product_price}₽"
+        else:
+            price_str = "—"
+        
+        text += (
+            f"🔥 <b>{i}.</b> {display_name}\n"
+            f"   💰 {price_str} <b>(-{savings_percent:.0f}%)</b>\n"
+        )
+        
+        products_data.append({"nm_id": p.nm_id, "name": display_name})
+    
+    text += "\n💡 Отличное время для покупки!"
+    
+    await query.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=products_inline(products_data)
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data == "filter_price_drops")
+async def filter_price_drops(query: CallbackQuery, db: DB):
+    """Показать товары с падающими ценами."""
+    
+    products = await db.list_products(query.from_user.id)
+    
+    # Фильтруем товары с падающим трендом
+    filtered = []
+    for p in products:
+        history = await db.get_price_history(p.id, limit=7)
+        if len(history) >= 3:
+            prices = [h.product_price for h in history]
+            # Проверяем тренд
+            if prices[0] < prices[-1]:  # Последняя цена ниже первой
+                drop = prices[-1] - prices[0]
+                filtered.append((p, drop))
+    
+    if not filtered:
+        await query.answer(
+            "📈 Сейчас цены стабильны или растут.\n"
+            "Следим дальше!",
+            show_alert=True
+        )
+        return
+    
+    # Сортируем по величине падения
+    filtered.sort(key=lambda x: x[1], reverse=True)
+    
+    text = (
+        "📉 <b>Цены падают</b>\n"
+        f"{'═'*25}\n\n"
+        f"Найдено товаров: <b>{len(filtered)}</b>\n\n"
+    )
+    
+    products_data = []
+    for i, (p, drop) in enumerate(filtered[:15], 1):
+        display_name = p.display_name[:35]
+        if len(p.display_name) > 35:
+            display_name += "..."
+        
+        text += (
+            f"📉 <b>{i}.</b> {display_name}\n"
+            f"   ↓ Падение: <b>{drop}₽</b> за неделю\n"
+        )
+        
+        products_data.append({"nm_id": p.nm_id, "name": display_name})
+    
+    text += "\n💡 Возможно, стоит подождать ещё!"
+    
+    await query.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=products_inline(products_data)
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data == "show_detailed_list")
+async def show_detailed_list(query: CallbackQuery, db: DB):
+    """Показать все товары с кнопками для детального просмотра."""
+    
+    products = await db.list_products(query.from_user.id)
+    
+    products_data = []
+    for p in products:
+        products_data.append({
+            "nm_id": p.nm_id,
+            "name": p.display_name
+        })
+    
+    text = (
+        "📋 <b>Все товары</b>\n"
+        f"{'═'*25}\n\n"
+        "Нажмите на товар, чтобы увидеть детальную информацию:"
+    )
+    
+    await query.message.edit_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=products_inline(products_data)
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data == "upsell_from_products_list")
+async def upsell_from_products_list(query: CallbackQuery, db: DB):
+    """Upsell с контекстом списка товаров."""
+    
+    user = await db.get_user(query.from_user.id)
+    products = await db.list_products(query.from_user.id)
+    
+    additional_slots = 50 - len(products)
+    
+    await query.message.edit_text(
+        f"🚀 <b>Расширьте возможности!</b>\n\n"
+        f"📦 Сейчас: <b>{len(products)}/5</b> товаров\n\n"
+        "😔 <b>Что вы упускаете:</b>\n"
+        "❌ Не можете добавить больше товаров\n"
+        "❌ История только за месяц\n"
+        "❌ Базовые уведомления\n\n"
+        f"✅ <b>С тарифом Базовый:</b>\n"
+        f"• Ещё <b>+{additional_slots} слотов</b>\n"
+        "• История за 3 месяца\n"
+        "• Умные уведомления\n"
+        "• Ваш ПВЗ\n\n"
+        "💰 Всего 199₽/мес — окупается с 1 покупки!",
+        parse_mode="HTML",
+        reply_markup=upsell_kb()
     )
     await query.answer()
 
 
 # ---------------- Детальная информация о товаре ----------------
-@router.callback_query(F.data.startswith("product_detail:"))
+@router.callback_query(F.data == "product_detail")
 async def cb_product_detail(query: CallbackQuery, db: DB):
     """Показать детальную информацию о товаре."""
     nm_id = int(query.data.split(":", 1)[1])
@@ -302,7 +718,6 @@ async def cb_product_detail(query: CallbackQuery, db: DB):
     if product.last_product_price:
         price = product.last_product_price
         if discount > 0:
-            from utils.wb_utils import apply_wallet_discount
             final_price = apply_wallet_discount(price, discount)
             text += f"💰 Цена: {price} ₽\n"
             text += f"💳 С кошельком ({discount}%): <b>{final_price} ₽</b>\n"
@@ -314,7 +729,7 @@ async def cb_product_detail(query: CallbackQuery, db: DB):
         if user and user.get("plan") == "plan_pro":
             # Только для продвинутого тарифа показываем количество
             if product.out_of_stock:
-                text += f"📦 Остаток: <b>Нет в наличии</b>\n"
+                text += "📦 Остаток: <b>Нет в наличии</b>\n"
             else:
                 text += f"📦 Остаток: <b>{product.last_qty} шт.</b>\n"
         else:
@@ -332,7 +747,6 @@ async def cb_product_detail(query: CallbackQuery, db: DB):
         text += f"\n📊 <b>Статистика:</b>\n"
 
         if discount > 0:
-            from utils.wb_utils import apply_wallet_discount
             min_with_discount = apply_wallet_discount(min_price, discount)
             max_with_discount = apply_wallet_discount(max_price, discount)
             text += f"• Мин. цена: {min_price} ₽ (с WB кошельком {min_with_discount} ₽)\n"
@@ -588,10 +1002,13 @@ async def cb_back_to_product(query: CallbackQuery, db: DB):
 async def cb_back_to_menu(query: CallbackQuery):
     """Возврат в главное меню."""
     await query.message.edit_text(
-        "🏠 Главное меню",
+        "🏠 <b>Главное меню</b>\n\n"
+        "Выберите действие:",
+        parse_mode="HTML",
         reply_markup=main_inline_kb()
     )
     await query.answer()
+
 
 
 # ---------------- Настройка уведомлений ----------------
@@ -791,8 +1208,6 @@ async def cb_export_excel(query: CallbackQuery, db: DB):
         filename = f"wb_products_{timestamp}.xlsx"
         
         # Отправляем файл
-        from aiogram.types import BufferedInputFile
-        
         document = BufferedInputFile(excel_buffer.read(), filename=filename)
         
         caption = (
@@ -844,8 +1259,6 @@ async def cb_export_csv(query: CallbackQuery, db: DB):
         filename = f"wb_products_{timestamp}.csv"
         
         # Отправляем файл
-        from aiogram.types import BufferedInputFile
-        
         document = BufferedInputFile(csv_buffer.read(), filename=filename)
         
         caption = (
