@@ -1,11 +1,13 @@
 import asyncio
 from datetime import datetime, timedelta
 import logging
-from aiogram import Bot, Dispatcher
+from typing import Callable, Dict, Any, Awaitable
+from aiogram import Bot, BaseMiddleware, Dispatcher
 from aiogram import exceptions
 from aiogram.types import BotCommand
 from config import settings
-from services.db import DB, ProductRow
+from services.container import Container
+from services.db import DB
 from services.price_fetcher import PriceFetcher
 from handlers import (
     plan as plan_h,
@@ -14,10 +16,15 @@ from handlers import (
     settings as settings_h,
     region as region_h,
     stats as stats_h,
-    onboarding as onboarding_h
+    onboarding as onboarding_h,
+    admin as admin_h
 )
+from utils.error_tracker import get_error_tracker
+from utils.health_monitor import get_health_monitor, HealthStatus
+from utils.rate_limiter import RateLimitMiddleware
 from utils.wb_utils import apply_wallet_discount
 from constants import DEFAULT_DEST
+from models import ProductRow
 
 logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL),
@@ -26,11 +33,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class Container:
-    """Контейнер зависимостей."""
-    def __init__(self, db: DB, price_fetcher: PriceFetcher):
-        self.db = db
-        self.price_fetcher = price_fetcher
+class DependencyInjectionMiddleware(BaseMiddleware):
+    """
+    Middleware для автоматической инъекции репозиториев в handlers.
+    
+    Зачем: Handlers автоматически получают нужные репозитории как аргументы.
+    """
+    
+    def __init__(self, container: Container):
+        super().__init__()
+        self.container = container
+    
+    async def __call__(
+        self,
+        handler: Callable[[Any, Dict[str, Any]], Awaitable[Any]],
+        event: Any,
+        data: Dict[str, Any]
+    ) -> Any:
+        # Добавляем репозитории в data (они будут доступны в handlers)
+        data["user_repo"] = self.container.get_user_repo()
+        data["product_repo"] = self.container.get_product_repo()
+        data["price_history_repo"] = self.container.get_price_history_repo()
+        
+        # Также добавляем сам контейнер (для доступа к другим зависимостям)
+        data["container"] = self.container
+        
+        # Для обратной совместимости (пока переписываете handlers)
+        data["db"] = self.container.db
+        data["price_fetcher"] = self.container.price_fetcher
+        
+        return await handler(event, data)
 
 
 async def monitor_loop(container: Container, bot: Bot):
@@ -39,6 +71,22 @@ async def monitor_loop(container: Container, bot: Bot):
     hourly_metrics = {"processed": 0, "errors": 0, "notifications": 0}
     cycles = 0
     report_every = max(1, 3600 // poll)
+    error_tracker = get_error_tracker()
+
+    # Регистрируем callback для алертов админу
+    async def send_alert_to_admin(alert_data: Dict):
+        """Отправка алерта администратору."""
+        try:
+            await bot.send_message(
+                settings.ADMIN_CHAT_ID,
+                alert_data['message'],
+                parse_mode="HTML"
+            )
+            logger.info(f"Alert sent to admin: {alert_data['severity']}")
+        except Exception as e:
+            logger.exception(f"Failed to send alert to admin: {e}")
+
+    error_tracker.register_alert_callback(send_alert_to_admin)
 
     async def process_product(p: ProductRow, metrics: dict[str, int]):
         """Обрабатываем один товар."""
@@ -258,6 +306,9 @@ async def monitor_loop(container: Container, bot: Bot):
                 hourly_metrics = {"processed": 0, "errors": 0, "notifications": 0}
                 cycles = 0
 
+            # Проверяем метрики после каждого цикла
+            await error_tracker.check_and_alert()
+
             await asyncio.sleep(poll)
 
         except Exception as e:
@@ -325,6 +376,40 @@ async def auto_backup(container: Container):
             logger.exception(f"Ошибка при автоматическом бэкапе: {e}")
 
 
+async def health_check_loop(container: Container, bot: Bot):
+    """Периодическая проверка здоровья системы."""
+    monitor = get_health_monitor()
+    
+    # Регистрируем callback для алертов
+    async def send_health_alert(alert_data: Dict):
+        try:
+            await bot.send_message(
+                settings.ADMIN_CHAT_ID,
+                alert_data['message'],
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.exception(f"Failed to send health alert: {e}")
+    
+    monitor.register_alert_callback(send_health_alert)
+    
+    while True:
+        try:
+            # Проверяем каждые 5 минут
+            await asyncio.sleep(300)
+            
+            logger.info("Выполняю проверку здоровья системы...")
+            health_data = await monitor.perform_full_check(container.db)
+            
+            if health_data['overall_status'] != HealthStatus.HEALTHY:
+                logger.warning(f"Health check: {health_data['overall_status'].value}")
+            else:
+                logger.info("Health check: система здорова")
+                
+        except Exception as e:
+            logger.exception(f"Ошибка в health_check_loop: {e}")
+            await asyncio.sleep(300)
+
 async def main():
     """Основная функция запуска бота."""
     logger.info("🚀 Запуск бота...")
@@ -354,6 +439,11 @@ async def main():
     dp.include_router(region_h.router)
     dp.include_router(stats_h.router)
     dp.include_router(onboarding_h.router)
+    dp.include_router(admin_h.router)
+
+    dp.message.middleware(RateLimitMiddleware(rate_limit=3))
+    dp.message.middleware(DependencyInjectionMiddleware(container))
+    dp.callback_query.middleware(DependencyInjectionMiddleware(container))
 
     # Dependency injection для handlers
     dp["db"] = db
@@ -366,6 +456,9 @@ async def main():
     # Запускаем очистку старых данных
     cleanup_task = asyncio.create_task(cleanup_old_data(container))
     logger.info("✅ Задача очистки данных запущена")
+
+    health_task = asyncio.create_task(health_check_loop(container, bot))
+    logger.info("✅ Задача проверки здоровья системы запущена")
 
     # Запускаем автоматический бэкап
     backup_task = asyncio.create_task(auto_backup(container))
@@ -400,8 +493,11 @@ async def main():
             await backup_task
         except asyncio.CancelledError:
             pass
+        try:
+            await health_task
+        except asyncio.CancelledError:
+            pass
 
-        
         # Закрываем XPowFetcher если используется
         try:
             from services.xpow_fetcher import close_xpow_fetcher

@@ -8,7 +8,8 @@ from utils.wb_utils import extract_nm_id, apply_wallet_discount
 from keyboards.kb import (
     products_inline, main_inline_kb, sizes_inline_kb,
     product_detail_kb, confirm_remove_kb, back_to_product_kb, notify_mode_kb,
-    export_format_kb, onboarding_kb, upsell_kb
+    export_format_kb, onboarding_kb, upsell_kb, products_list_kb,
+    remove_products_kb
 )
 from utils.decorators import require_plan
 from utils.graph_generator import generate_price_graph
@@ -451,64 +452,28 @@ async def cb_list_products(query: CallbackQuery, db: DB):
             )
         ])
     
-    # Основные действия
-    keyboard_rows.extend([
-        [
-            InlineKeyboardButton(
-                text="➕ Добавить товар",
-                callback_data="add_product"
-            ),
-            InlineKeyboardButton(
-                text="🗑 Удалить товар",
-                callback_data="remove_product"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📊 Показать все детально",
-                callback_data="show_detailed_list"
-            )
-        ]
-    ])
-    
-    # Экспорт (только для Pro)
-    if plan == "plan_pro":
-        keyboard_rows.append([
-            InlineKeyboardButton(
-                text="📋 Экспорт в Excel/CSV",
-                callback_data="export_menu"
-            )
-        ])
-    
-    # Апгрейд для бесплатного тарифа
-    if plan == "plan_free" and len(products) >= 3:
-        keyboard_rows.append([
-            InlineKeyboardButton(
-                text="🚀 Улучшить тариф (до 50 товаров)",
-                callback_data="upsell_from_products_list"
-            )
-        ])
-    
-    keyboard_rows.append([
-        InlineKeyboardButton(
-            text="« Назад",
-            callback_data="back_to_menu"
-        )
-    ])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-    
+    # Формируем данные для клавиатуры
+    products_data = [
+        {'nm_id': p.nm_id, 'display_name': p.display_name}
+        for p in products
+    ]
+
     await query.message.edit_text(
         text,
         parse_mode="HTML",
-        reply_markup=keyboard
+        reply_markup=products_list_kb(
+            products=products_data,
+            has_filters=(plan in ["plan_basic", "plan_pro"]),
+            show_export=(plan == "plan_pro"),
+            show_upgrade=(plan == "plan_free" and len(products) >= 3)
+        )
     )
-    await query.answer()
 
 
 # ===== ФИЛЬТРЫ =====
 
 @router.callback_query(F.data == "filter_best_deals")
+@require_plan(['plan_basic', 'plan_pro'], "⛔ Фильтры доступны только на платных тарифах")
 async def filter_best_deals(query: CallbackQuery, db: DB):
     """Показать только товары с лучшими скидками."""
     
@@ -580,6 +545,7 @@ async def filter_best_deals(query: CallbackQuery, db: DB):
 
 
 @router.callback_query(F.data == "filter_price_drops")
+@require_plan(['plan_basic', 'plan_pro'], "⛔ Фильтры доступны только на платных тарифах")
 async def filter_price_drops(query: CallbackQuery, db: DB):
     """Показать товары с падающими ценами."""
     
@@ -906,30 +872,22 @@ async def cb_start_remove(query: CallbackQuery, db: DB):
         await query.answer("📭 Нет товаров для удаления", show_alert=True)
         return
 
-    text = "🗑 <b>Выберите товар для удаления:</b>\n\n"
-    kb_buttons = []
+    # Формируем список для клавиатуры
+    products_data = [
+        {'nm_id': p.nm_id, 'display_name': p.display_name}
+        for p in products
+    ]
     
-    for i, p in enumerate(products, 1):
-        display_name = p.display_name
-        text += f'{i}. {display_name}\n'
-        kb_buttons.append([
-            {
-                "text": f"❌ {display_name[:30]}...",
-                "callback_data": f"rm:{p.nm_id}"
-            }
-        ])
-    
-    kb_buttons.append([{"text": "« Назад", "callback_data": "back_to_menu"}])
-    
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"])]
-            for row in kb_buttons for btn in row
-        ]
+    text = (
+        "🗑 <b>Выберите товар для удаления:</b>\n\n"
+        f"Всего товаров: {len(products)}"
     )
-    
-    await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+
+    await query.message.edit_text(
+        text,
+        reply_markup=remove_products_kb(products_data),
+        parse_mode="HTML"
+    )
     await query.answer()
 
 

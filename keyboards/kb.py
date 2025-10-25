@@ -1,4 +1,5 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Dict, List
 
 
 def start_kb() -> InlineKeyboardMarkup:
@@ -547,3 +548,353 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
         ]
     )
     return kb
+
+
+def remove_products_kb(products: List[Dict]) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для выбора товара на удаление.
+
+    Args:
+        products: Список словарей с ключами 'nm_id' и 'display_name'
+
+    Returns:
+        InlineKeyboardMarkup с кнопками товаров и кнопкой "Назад"
+    """
+    buttons = []
+
+    for product in products:
+        display_name = product['display_name']
+        # Обрезаем название для удобства отображения
+        if len(display_name) > 30:
+            display_name = display_name[:27] + "..."
+
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"❌ {display_name}",
+                callback_data=f"rm:{product['nm_id']}"
+            )
+        ])
+
+    # Добавляем кнопку "Назад"
+    buttons.append([
+        InlineKeyboardButton(
+            text="« Назад",
+            callback_data="back_to_menu"
+        )
+    ])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return kb
+
+
+def products_list_kb(
+    products: List[Dict],
+    has_filters: bool = False,
+    show_export: bool = False,
+    show_upgrade: bool = False,
+    slots_info: str = ""
+) -> InlineKeyboardMarkup:
+    """
+    Улучшенная клавиатура для списка товаров с поддержкой фильтров.
+    
+    Args:
+        products: Список товаров с nm_id и display_name
+        has_filters: Показывать ли кнопки фильтров
+        show_export: Показывать ли кнопку экспорта (для Pro)
+        show_upgrade: Показывать ли кнопку апгрейда (для Free)
+        slots_info: Текст для отображения информации о слотах
+    
+    Returns:
+        InlineKeyboardMarkup
+    """
+    buttons = []
+    
+    # Кнопки товаров (показываем первые 10 для удобства)
+    for product in products[:10]:
+        display_name = product['display_name']
+        if len(display_name) > 35:
+            display_name = display_name[:32] + "..."
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📊 {display_name}",
+                callback_data=f"product_detail:{product['nm_id']}"
+            )
+        ])
+    
+    # Если товаров больше 10, добавляем кнопку "Показать все"
+    if len(products) > 10:
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"📋 Показать все ({len(products)} товаров)",
+                callback_data="show_all_products"
+            )
+        ])
+    
+    # Фильтры (для платных тарифов)
+    if has_filters:
+        buttons.append([
+            InlineKeyboardButton(
+                text="🔥 Лучшие скидки",
+                callback_data="filter_best_deals"
+            ),
+            InlineKeyboardButton(
+                text="📉 Падающие цены",
+                callback_data="filter_price_drops"
+            )
+        ])
+    
+    # Основные действия
+    buttons.append([
+        InlineKeyboardButton(
+            text="➕ Добавить товар",
+            callback_data="add_product"
+        ),
+        InlineKeyboardButton(
+            text="🗑 Удалить товар",
+            callback_data="remove_product"
+        )
+    ])
+    
+    # Экспорт для Pro
+    if show_export:
+        buttons.append([
+            InlineKeyboardButton(
+                text="📋 Экспорт в Excel/CSV",
+                callback_data="export_menu"
+            )
+        ])
+    
+    # Апгрейд для Free
+    if show_upgrade:
+        buttons.append([
+            InlineKeyboardButton(
+                text="🚀 Улучшить тариф (до 50 товаров)",
+                callback_data="upsell_from_products_list"
+            )
+        ])
+    
+    # Кнопка "Назад"
+    buttons.append([
+        InlineKeyboardButton(
+            text="« Назад",
+            callback_data="back_to_menu"
+        )
+    ])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return kb
+
+
+def product_navigation_kb(
+    nm_id: int,
+    current_index: int,
+    total_products: int,
+    prev_nm_id: int = None,
+    next_nm_id: int = None
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для навигации по товарам в карточке.
+    
+    Args:
+        nm_id: Текущий артикул
+        current_index: Текущий индекс товара (1-based)
+        total_products: Общее количество товаров
+        prev_nm_id: Артикул предыдущего товара (если есть)
+        next_nm_id: Артикул следующего товара (если есть)
+    
+    Returns:
+        InlineKeyboardMarkup с навигацией
+    """
+    buttons = []
+    
+    # Навигация (только если товаров больше 1)
+    if total_products > 1:
+        nav_row = []
+        
+        if prev_nm_id:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="⬅️ Предыдущий",
+                    callback_data=f"nav_product:{prev_nm_id}:{current_index-1}"
+                )
+            )
+        
+        # Индикатор позиции
+        nav_row.append(
+            InlineKeyboardButton(
+                text=f"• {current_index}/{total_products} •",
+                callback_data="noop"
+            )
+        )
+        
+        if next_nm_id:
+            nav_row.append(
+                InlineKeyboardButton(
+                    text="Следующий ➡️",
+                    callback_data=f"nav_product:{next_nm_id}:{current_index+1}"
+                )
+            )
+        
+        buttons.append(nav_row)
+    
+    # Основные действия
+    buttons.extend([
+        [
+            InlineKeyboardButton(
+                text="📈 График цен",
+                callback_data=f"show_graph:{nm_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔔 Настроить уведомления",
+                callback_data=f"notify_settings:{nm_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="✏️ Переименовать",
+                callback_data=f"rename:{nm_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🔗 Открыть на WB",
+                url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🗑 Удалить",
+                callback_data=f"rm:{nm_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📋 Вернуться к списку",
+                callback_data="list_products"
+            )
+        ]
+    ])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    return kb
+
+
+# Обработчик "noop" для неактивных кнопок
+async def handle_noop(query):
+    """Заглушка для неактивных кнопок."""
+    await query.answer()
+
+
+def admin_menu_kb() -> InlineKeyboardMarkup:
+    """Главное меню администратора."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
+            InlineKeyboardButton(text="🏥 Здоровье", callback_data="admin_health")
+        ],
+        [
+            InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"),
+            InlineKeyboardButton(text="📦 Товары", callback_data="admin_products")
+        ],
+        [
+            InlineKeyboardButton(text="⚠️ Ошибки API", callback_data="admin_errors"),
+            InlineKeyboardButton(text="🔧 Система", callback_data="admin_system")
+        ],
+        [
+            InlineKeyboardButton(text="💳 Платежи", callback_data="admin_payments"),
+            InlineKeyboardButton(text="📨 Рассылка", callback_data="admin_broadcast")
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_menu")
+        ]
+    ])
+
+
+def back_to_admin_menu_kb() -> InlineKeyboardMarkup:
+    """Кнопка возврата в админ меню."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="« Назад в меню", callback_data="admin_menu")]
+    ])
+
+
+def user_management_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура управления пользователем."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📋 Изменить тариф",
+                callback_data=f"admin_change_plan:{user_id}"
+            ),
+            InlineKeyboardButton(
+                text="🚫 Заблокировать",
+                callback_data=f"admin_ban_user:{user_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📊 Детали",
+                callback_data=f"admin_user_details:{user_id}"
+            ),
+            InlineKeyboardButton(
+                text="🗑 Удалить данные",
+                callback_data=f"admin_delete_user:{user_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="« Назад",
+                callback_data="admin_users"
+            )
+        ]
+    ])
+
+
+def plan_selection_kb(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора тарифа для пользователя."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🎁 Free (5)",
+                callback_data=f"admin_set_plan:{user_id}:plan_free:5"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="💼 Basic (50)",
+                callback_data=f"admin_set_plan:{user_id}:plan_basic:50"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🚀 Pro (250)",
+                callback_data=f"admin_set_plan:{user_id}:plan_pro:250"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="« Отмена",
+                callback_data=f"admin_user_manage:{user_id}"
+            )
+        ]
+    ])
+
+
+def broadcast_confirm_kb(message_text: str) -> InlineKeyboardMarkup:
+    """Подтверждение рассылки."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✅ Отправить всем",
+                callback_data="admin_broadcast_confirm"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="admin_menu"
+            )
+        ]
+    ])

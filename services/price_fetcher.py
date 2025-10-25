@@ -6,6 +6,7 @@ import aiohttp
 from constants import DEFAULT_DEST
 from utils.cache import product_cache
 from utils.decorators import retry_on_error
+from utils.error_tracker import get_error_tracker, ErrorType
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ class PriceFetcher:
         self._session: Optional[aiohttp.ClientSession] = None
         self.use_xpow = use_xpow
         self._xpow_fetcher = None
+        self.error_tracker = get_error_tracker()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -109,6 +111,7 @@ class PriceFetcher:
         cached = product_cache.get(cache_key)
         
         if cached:
+            self.error_tracker.track_success()
             logger.debug(f"[nm={nm_id}] Данные из кэша")
             return cached
     
@@ -165,11 +168,55 @@ class PriceFetcher:
 
                 if result:
                     product_cache.set(cache_key, result)
+                    self.error_tracker.track_success()
 
                 return result
 
+            except asyncio.TimeoutError:
+                self.error_tracker.track_error(
+                    ErrorType.TIMEOUT,
+                    nm_id=nm_id,
+                    details=f"Timeout after 20s"
+                )
+                logger.error(f"[nm={nm_id}] Timeout при получении данных")
+                return None
+                
+            except aiohttp.ClientError as e:
+                # Определяем тип ошибки
+                error_type = ErrorType.CONNECTION
+                
+                if hasattr(e, 'status'):
+                    if e.status == 403:
+                        error_type = ErrorType.HTTP_403
+                    elif e.status == 429:
+                        error_type = ErrorType.HTTP_429
+                    elif 500 <= e.status < 600:
+                        error_type = ErrorType.HTTP_5XX
+                
+                self.error_tracker.track_error(
+                    error_type,
+                    nm_id=nm_id,
+                    details=str(e)
+                )
+                logger.error(f"[nm={nm_id}] HTTP ошибка: {e}")
+                return None
+                
+            except (KeyError, ValueError, IndexError) as e:
+                self.error_tracker.track_error(
+                    ErrorType.PARSE_ERROR,
+                    nm_id=nm_id,
+                    details=str(e)
+                )
+                logger.error(f"[nm={nm_id}] Ошибка парсинга: {e}")
+                return None
+                
             except Exception as e:
-                logger.error(f"[nm={nm_id}] Ошибка при получении данных: {e}")
+                self.error_tracker.track_error(
+                    ErrorType.UNKNOWN,
+                    nm_id=nm_id,
+                    details=str(e)
+                )
+                logger.exception(f"[nm={nm_id}] Неизвестная ошибка: {e}")
                 return None
 
     async def get_products_batch(self, nm_ids: list[int], dest: Optional[int] = None) -> Dict[int, Optional[Dict]]:

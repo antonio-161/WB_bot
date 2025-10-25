@@ -12,6 +12,8 @@ services:
       db:
         condition: service_healthy
     volumes:
+      - .:/app
+      - ~/.cache/ms-playwright:/home/botuser/.cache/ms-playwright
       - ./logs:/app/logs
     networks:
       - bot_network
@@ -26,6 +28,13 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    command: >
+      watchmedo auto-restart
+      --directory=.
+      --pattern="*.py"
+      --recursive
+      -- python -m main
+    tty: true
 
   db:
     image: postgres:16-alpine

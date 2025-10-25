@@ -16,6 +16,7 @@ numpy==1.26.4
 openpyxl==3.1.2
 playwright==1.40.0
 propcache==0.4.1
+psutil==7.1.2
 pydantic==2.5.3
 pydantic-settings==2.0.3
 pydantic_core==2.14.6
@@ -25,5 +26,6 @@ setuptools==80.9.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 urllib3==2.5.0
+watchdog==6.0.0
 wheel==0.45.1
 yarl==1.22.0

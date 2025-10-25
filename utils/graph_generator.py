@@ -6,7 +6,7 @@ import matplotlib
 matplotlib.use('Agg')  # Без GUI
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from services.db import PriceHistoryRow
+from models import PriceHistoryRow
 
 # Настройка для корректного отображения русского текста
 plt.rcParams['font.family'] = 'DejaVu Sans'

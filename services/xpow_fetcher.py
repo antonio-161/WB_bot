@@ -104,7 +104,7 @@ class XPowFetcher:
                 
                 # Ждём токен максимум 10 секунд
                 try:
-                    await asyncio.wait_for(token_captured.wait(), timeout=10.0)
+                    await asyncio.wait_for(token_captured.wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     logger.warning(f"Токен не перехвачен за 10 секунд для товара {nm_id}")
                 
