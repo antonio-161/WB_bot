@@ -13,7 +13,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
-      - ~/.cache/ms-playwright:/home/botuser/.cache/ms-playwright
+      # - ~/.cache/ms-playwright:/home/botuser/.cache/ms-playwright
       - ./logs:/app/logs
     networks:
       - bot_network
