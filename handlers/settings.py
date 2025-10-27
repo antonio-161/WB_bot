@@ -1,19 +1,32 @@
+"""
+Обработчики настроек пользователя.
+"""
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+
 from states.user_states import SetDiscountState
-from services.db import DB
+from services.user_service import UserService
+from services.product_service import ProductService
+from services.settings_service import SettingsService
 from keyboards.kb import (
     settings_kb, back_to_settings_kb, upgrade_plan_kb, choose_plan_kb,
     main_inline_kb, onboarding_pvz_kb, onboarding_discount_kb
 )
+from handlers.region import cb_set_pvz
 
 router = Router()
 
 
-async def start_onboarding(message, db: DB, user_id: int, plan_key: str):
+# ===== Онбординг =====
+
+async def start_onboarding(
+    message: Message,
+    user_service: UserService,
+    user_id: int,
+    plan_key: str
+):
     """Начать процесс онбординга нового пользователя."""
-    # Разные сообщения в зависимости от тарифа
     if plan_key == "plan_free":
         intro = (
             "🎯 <b>Давайте настроим бота</b>\n\n"
@@ -52,9 +65,10 @@ async def onboarding_discount(query: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data == "onboarding_skip_discount")
-async def onboarding_skip_discount(query: CallbackQuery, db: DB):
+async def onboarding_skip_discount(query: CallbackQuery, user_service: UserService):
     """Пропуск установки скидки."""
-    user = await db.get_user(query.from_user.id)
+    user_id = query.from_user.id
+    user = await user_service.get_user_info(user_id)
     plan = user.get("plan", "plan_free") if user else "plan_free"
 
     if plan in ["plan_basic", "plan_pro"]:
@@ -78,9 +92,8 @@ async def onboarding_skip_discount(query: CallbackQuery, db: DB):
 @router.callback_query(F.data == "onboarding_set_pvz")
 async def onboarding_pvz(query: CallbackQuery, state: FSMContext):
     """Установка ПВЗ в процессе онбординга."""
-    from handlers.region import cb_set_pvz
     await state.update_data(onboarding=True)
-    await cb_set_pvz(query, state, query.bot.get("db"))
+    await cb_set_pvz(query, state)
 
 
 @router.callback_query(F.data == "onboarding_skip_pvz")
@@ -96,39 +109,34 @@ async def onboarding_skip_pvz(query: CallbackQuery):
     await query.answer()
 
 
-@router.callback_query(F.data == "settings")
-async def cb_settings(query: CallbackQuery, db: DB):
-    """Показать настройки пользователя."""
-    user = await db.get_user(query.from_user.id)
+# ===== Просмотр настроек =====
 
-    if not user:
+@router.callback_query(F.data == "settings")
+async def cb_settings(
+    query: CallbackQuery,
+    settings_service: SettingsService,
+    product_service: ProductService
+):
+    """Показать настройки пользователя."""
+    user_id = query.from_user.id
+    
+    # Получаем настройки
+    settings = await settings_service.get_user_settings(user_id)
+    
+    if not settings.get("exists"):
         await query.answer("Ошибка получения данных", show_alert=True)
         return
-
-    discount = user.get("discount_percent", 0)
-    plan_name = user.get("plan_name", "Не установлен")
-    max_links = user.get("max_links", 5)
-    dest = user.get("dest", -1257786)
-    pvz_address = user.get("pvz_address")
-
-    products = await db.list_products(query.from_user.id)
-    used_slots = len(products)
-
-    # Определяем информацию о ПВЗ
-    from constants import DEFAULT_DEST
-    if dest == DEFAULT_DEST or not dest:
-        pvz_info = "Москва (по умолчанию)"
-    elif pvz_address:
-        pvz_info = pvz_address
-    else:
-        pvz_info = f"Код: {dest}"
-
+    
+    # Получаем количество товаров
+    products_analytics = await product_service.get_products_with_analytics(user_id)
+    used_slots = len(products_analytics)
+    
     text = (
         "⚙️ <b>Ваши настройки</b>\n\n"
-        f"📋 Тариф: <b>{plan_name}</b>\n"
-        f"📊 Использовано слотов: <b>{used_slots}/{max_links}</b>\n"
-        f"💳 Скидка WB кошелька: <b>{discount}%</b>\n"
-        f"📍 ПВЗ: <b>{pvz_info}</b>\n\n"
+        f"📋 Тариф: <b>{settings['plan_name']}</b>\n"
+        f"📊 Использовано слотов: <b>{used_slots}/{settings['max_links']}</b>\n"
+        f"💳 Скидка WB кошелька: <b>{settings['discount']}%</b>\n"
+        f"📍 ПВЗ: <b>{settings['pvz_info']}</b>\n\n"
         "Используйте кнопки ниже для изменения настроек."
     )
 
@@ -140,11 +148,19 @@ async def cb_settings(query: CallbackQuery, db: DB):
     await query.answer()
 
 
+# ===== Изменение скидки =====
+
 @router.callback_query(F.data == "set_discount")
-async def cb_set_discount(query: CallbackQuery, state: FSMContext, db: DB):
+async def cb_set_discount(
+    query: CallbackQuery,
+    state: FSMContext,
+    settings_service: SettingsService
+):
     """Начало установки скидки через callback."""
-    user = await db.get_user(query.from_user.id)
-    current_discount = user.get("discount_percent", 0) if user else 0
+    user_id = query.from_user.id
+    
+    settings = await settings_service.get_user_settings(user_id)
+    current_discount = settings.get("discount", 0) if settings.get("exists") else 0
 
     await query.message.answer(
         "💳 <b>Установка скидки WB кошелька</b>\n\n"
@@ -160,44 +176,50 @@ async def cb_set_discount(query: CallbackQuery, state: FSMContext, db: DB):
 
 
 @router.message(SetDiscountState.waiting_for_discount)
-async def process_discount(message: Message, state: FSMContext, db: DB):
-    """Установка скидки."""
+async def process_discount(
+    message: Message,
+    state: FSMContext,
+    settings_service: SettingsService,
+    user_service: UserService
+):
+    """Обработка ввода скидки."""
     if message.text == "/cancel":
         await message.answer(
-            "❌ Установка скидки отменена", reply_markup=settings_kb()
+            "❌ Установка скидки отменена",
+            reply_markup=settings_kb()
         )
         await state.clear()
         return
 
     try:
-        v = int(message.text.strip())
-        if v < 0 or v > 100:
-            raise ValueError
+        discount = int(message.text.strip())
     except ValueError:
-        await message.answer(
-            "❌ Неверный формат.\n"
-            "Введите целое число от 0 до 100."
-        )
+        await message.answer("❌ Введите целое число от 0 до 100")
         return
-
-    await db.ensure_user(message.from_user.id)
-    await db.set_discount(message.from_user.id, v)
-
+    
+    # Обновляем скидку через сервис
+    success, msg = await settings_service.update_discount(message.from_user.id, discount)
+    
+    if not success:
+        await message.answer(f"❌ {msg}")
+        return
+    
     await message.answer(
-        f"✅ Скидка WB кошелька установлена: <b>{v}%</b>\n\n"
+        f"✅ <b>{msg}</b>\n\n"
         "Она будет учитываться при отображении цен.",
         parse_mode="HTML",
         reply_markup=back_to_settings_kb()
     )
+    
+    # Проверяем онбординг
     data = await state.get_data()
     is_onboarding = data.get("onboarding", False)
 
     if is_onboarding:
-        user = await db.get_user(message.from_user.id)
+        user = await user_service.get_user_info(message.from_user.id)
         plan = user.get("plan", "plan_free") if user else "plan_free"
 
         if plan in ["plan_basic", "plan_pro"]:
-            
             await message.answer(
                 "📍 <b>Настройка региона</b>\n\n"
                 "Установите ваш пункт выдачи для точного отображения цен и остатков.\n\n"
@@ -216,11 +238,19 @@ async def process_discount(message: Message, state: FSMContext, db: DB):
     await state.clear()
 
 
-@router.callback_query(F.data == "my_plan")
-async def cb_my_plan(query: CallbackQuery, db: DB):
-    """Показать информацию о текущем тарифе."""
-    user = await db.get_user(query.from_user.id)
+# ===== Просмотр тарифа =====
 
+@router.callback_query(F.data == "my_plan")
+async def cb_my_plan(
+    query: CallbackQuery,
+    user_service: UserService,
+    product_service: ProductService
+):
+    """Показать информацию о текущем тарифе."""
+    user_id = query.from_user.id
+    
+    user = await user_service.get_user_info(user_id)
+    
     if not user:
         await query.answer("Ошибка получения данных", show_alert=True)
         return
@@ -228,8 +258,8 @@ async def cb_my_plan(query: CallbackQuery, db: DB):
     plan_name = user.get("plan_name", "Не установлен")
     max_links = user.get("max_links", 5)
 
-    products = await db.list_products(query.from_user.id)
-    used_slots = len(products)
+    products_analytics = await product_service.get_products_with_analytics(user_id)
+    used_slots = len(products_analytics)
 
     text = (
         f"💳 <b>Ваш тариф: {plan_name}</b>\n\n"

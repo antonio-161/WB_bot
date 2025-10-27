@@ -1,9 +1,12 @@
+"""
+Обработчики для управления регионом (ПВЗ).
+"""
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+
 from states.user_states import SetPVZState
-from services.db import DB
-from services.pvz_finder import get_dest_by_address
+from services.settings_service import SettingsService
 from keyboards.kb import reset_pvz_kb, back_to_settings_kb, main_inline_kb
 from utils.decorators import require_plan
 import logging
@@ -14,17 +17,29 @@ logger = logging.getLogger(__name__)
 
 @router.callback_query(F.data == "set_pvz")
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Установка ПВЗ доступна только на платных тарифах")
-async def cb_set_pvz(query: CallbackQuery, state: FSMContext, db: DB):
+async def cb_set_pvz(
+    query: CallbackQuery,
+    state: FSMContext,
+    settings_service: SettingsService
+):
     """Начало установки ПВЗ через callback."""
-    user = await db.get_user(query.from_user.id)
-
-    current_dest = user.get('dest') if user else None
+    user_id = query.from_user.id
+    
+    # Получаем текущий ПВЗ
+    pvz_info = await settings_service.get_pvz_info(user_id)
+    
     current_info = ""
-
-    if current_dest and current_dest != -1257786:
-        current_info = f"\n\n📍 <b>Текущий ПВЗ:</b> установлен (код: {current_dest})"
-    else:
-        current_info = "\n\n📍 <b>Текущий ПВЗ:</b> не установлен (используется Москва по умолчанию)"
+    if pvz_info.get("exists"):
+        if pvz_info.get("is_default"):
+            current_info = (
+                "\n\n📍 <b>Текущий ПВЗ:</b> не установлен "
+                "(используется Москва по умолчанию)"
+            )
+        else:
+            address = pvz_info.get("address")
+            current_info = (
+                f"\n\n📍 <b>Текущий ПВЗ:</b> установлен ({address})"
+            )
 
     await query.message.answer(
         "📍 <b>Установка адреса пункта выдачи</b>\n\n"
@@ -46,23 +61,21 @@ async def cb_set_pvz(query: CallbackQuery, state: FSMContext, db: DB):
 
 
 @router.message(SetPVZState.waiting_for_address)
-async def process_pvz_address(message: Message, state: FSMContext, db: DB):
+async def process_pvz_address(
+    message: Message,
+    state: FSMContext,
+    settings_service: SettingsService
+):
     """Обработка ввода адреса ПВЗ."""
     if message.text == "/cancel":
-        await message.answer("❌ Установка ПВЗ отменена", reply_markup=back_to_settings_kb())
-        await state.clear()
-        return
-    
-    address = message.text.strip()
-
-    if len(address) < 5:
         await message.answer(
-            "❌ Адрес слишком короткий.\n"
-            "Введите полный адрес ПВЗ.",
+            "❌ Установка ПВЗ отменена",
             reply_markup=back_to_settings_kb()
         )
         await state.clear()
         return
+    
+    address = message.text.strip()
 
     # Отправляем статус сообщение
     status_msg = await message.answer(
@@ -73,12 +86,15 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
     )
 
     try:
-        # Запускаем Playwright скрипт
-        dest = await get_dest_by_address(address)
-
-        if not dest:
+        # Обновляем ПВЗ через сервис
+        success, msg, dest = await settings_service.update_pvz_by_address(
+            message.from_user.id,
+            address
+        )
+        
+        if not success:
             await status_msg.edit_text(
-                "❌ <b>Не удалось найти пункт выдачи</b>\n\n"
+                f"❌ <b>{msg}</b>\n\n"
                 "Возможные причины:\n"
                 "• Адрес введён некорректно\n"
                 "• ПВЗ по этому адресу не найден на WB\n"
@@ -93,14 +109,9 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
             await state.clear()
             return
 
-        # Сохраняем в БД
-        await db.ensure_user(message.from_user.id)
-        await db.set_pvz(message.from_user.id, dest, address)
-
         await status_msg.edit_text(
             f"✅ <b>Пункт выдачи установлен!</b>\n\n"
             f"📍 <b>Адрес:</b> {address}\n"
-            f"🔢 <b>Код региона:</b> <code>{dest}</code>\n\n"
             f"Теперь все цены товаров будут отображаться для вашего региона доставки.",
             parse_mode="HTML",
             reply_markup=back_to_settings_kb()
@@ -121,6 +132,7 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
             reply_markup=back_to_settings_kb()
         )
 
+    # Проверяем онбординг
     data = await state.get_data()
     is_onboarding = data.get("onboarding", False)
 
@@ -136,31 +148,33 @@ async def process_pvz_address(message: Message, state: FSMContext, db: DB):
 
 
 @router.callback_query(F.data == "show_pvz")
-async def cb_show_pvz(query: CallbackQuery, db: DB):
+async def cb_show_pvz(
+    query: CallbackQuery,
+    settings_service: SettingsService
+):
     """Показать текущий ПВЗ."""
-    user = await db.get_user(query.from_user.id)
+    user_id = query.from_user.id
+    
+    pvz_info = await settings_service.get_pvz_info(user_id)
 
-    if not user:
+    if not pvz_info.get("exists"):
         await query.answer("Ошибка получения данных", show_alert=True)
         return
 
-    dest = user.get("dest")
-    pvz_address = user.get("pvz_address")
-
-    from constants import DEFAULT_DEST
-
-    if dest == DEFAULT_DEST or not dest:
+    if pvz_info.get("is_default"):
+        from constants import DEFAULT_DEST
         text = (
             f"📍 <b>Пункт выдачи не установлен</b>\n\n"
             f"По умолчанию используется: <b>Москва</b>\n"
-            f"Код региона: <code>{DEFAULT_DEST}</code>\n\n"
             f"💡 Установите ваш ПВЗ, чтобы видеть точные цены для вашего региона."
         )
     else:
+        dest = pvz_info.get("dest")
+        address = pvz_info.get("address", "Установлен")
+        
         text = (
             f"📍 <b>Ваш пункт выдачи</b>\n\n"
-            f"Адрес: <b>{pvz_address or 'Установлен'}</b>\n"
-            f"Код региона: <code>{dest}</code>\n\n"
+            f"Адрес: <b>{address}</b>\n"
             f"💡 Цены отображаются для вашего региона."
         )
 
@@ -173,15 +187,23 @@ async def cb_show_pvz(query: CallbackQuery, db: DB):
 
 
 @router.callback_query(F.data == "reset_pvz")
-async def cb_reset_pvz(query: CallbackQuery, db: DB):
+async def cb_reset_pvz(
+    query: CallbackQuery,
+    settings_service: SettingsService
+):
     """Сброс ПВЗ на Москву по умолчанию."""
+    user_id = query.from_user.id
+    
+    success, msg = await settings_service.reset_pvz(user_id)
+    
+    if not success:
+        await query.answer(f"❌ {msg}", show_alert=True)
+        return
+    
     from constants import DEFAULT_DEST
-
-    await db.ensure_user(query.from_user.id)
-    await db.set_pvz(query.from_user.id, DEFAULT_DEST, None)
-
+    
     await query.message.edit_text(
-        "✅ <b>ПВЗ сброшен</b>\n\n"
+        f"✅ <b>ПВЗ сброшен</b>\n\n"
         "Установлен регион по умолчанию: <b>Москва</b>\n"
         f"Код региона: <code>{DEFAULT_DEST}</code>",
         parse_mode="HTML",

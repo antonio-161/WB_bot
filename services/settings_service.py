@@ -1,0 +1,136 @@
+"""
+Сервис для работы с настройками пользователей.
+"""
+import logging
+from typing import Dict, Optional, Tuple
+from repositories.user_repository import UserRepository
+from services.pvz_finder import get_dest_by_address
+from constants import DEFAULT_DEST
+
+logger = logging.getLogger(__name__)
+
+
+class SettingsService:
+    """Сервис для работы с настройками."""
+    
+    def __init__(self, user_repo: UserRepository):
+        self.user_repo = user_repo
+    
+    async def get_user_settings(self, user_id: int) -> Dict:
+        """Получить настройки пользователя."""
+        user = await self.user_repo.get_by_id(user_id)
+        
+        if not user:
+            return {
+                "exists": False
+            }
+        
+        discount = user.get("discount_percent", 0)
+        plan_name = user.get("plan_name", "Не установлен")
+        max_links = user.get("max_links", 5)
+        dest = user.get("dest", DEFAULT_DEST)
+        pvz_address = user.get("pvz_address")
+        
+        # Определяем информацию о ПВЗ
+        if dest == DEFAULT_DEST or not dest:
+            pvz_info = "Москва (по умолчанию)"
+        elif pvz_address:
+            pvz_info = pvz_address
+        else:
+            pvz_info = f"Код: {dest}"
+        
+        return {
+            "exists": True,
+            "discount": discount,
+            "plan_name": plan_name,
+            "max_links": max_links,
+            "dest": dest,
+            "pvz_address": pvz_address,
+            "pvz_info": pvz_info
+        }
+    
+    async def update_discount(
+        self,
+        user_id: int,
+        discount: int
+    ) -> Tuple[bool, str]:
+        """
+        Обновить скидку WB кошелька.
+        
+        Returns:
+            (success, message)
+        """
+        if not 0 <= discount <= 100:
+            return False, "Скидка должна быть от 0 до 100%"
+        
+        success = await self.user_repo.set_discount(user_id, discount)
+        
+        if success:
+            return True, f"Скидка установлена: {discount}%"
+        else:
+            return False, "Ошибка при сохранении скидки"
+    
+    async def update_pvz_by_address(
+        self,
+        user_id: int,
+        address: str
+    ) -> Tuple[bool, str, Optional[int]]:
+        """
+        Обновить ПВЗ по адресу.
+        
+        Returns:
+            (success, message, dest)
+        """
+        if len(address) < 5:
+            return False, "Адрес слишком короткий", None
+        
+        # Получаем dest через Playwright
+        dest = await get_dest_by_address(address)
+        
+        if not dest:
+            return (
+                False,
+                "Не удалось найти пункт выдачи по указанному адресу",
+                None
+            )
+        
+        # Сохраняем в БД
+        success = await self.user_repo.set_pvz(user_id, dest, address)
+        
+        if success:
+            return True, f"ПВЗ установлен (dest={dest})", dest
+        else:
+            return False, "Ошибка при сохранении ПВЗ", None
+    
+    async def reset_pvz(self, user_id: int) -> Tuple[bool, str]:
+        """
+        Сбросить ПВЗ на значение по умолчанию.
+        
+        Returns:
+            (success, message)
+        """
+        success = await self.user_repo.set_pvz(user_id, DEFAULT_DEST, None)
+        
+        if success:
+            return True, "ПВЗ сброшен на Москву"
+        else:
+            return False, "Ошибка при сбросе ПВЗ"
+    
+    async def get_pvz_info(self, user_id: int) -> Dict:
+        """Получить информацию о текущем ПВЗ."""
+        user = await self.user_repo.get_by_id(user_id)
+        
+        if not user:
+            return {"exists": False}
+        
+        dest = user.get("dest", DEFAULT_DEST)
+        pvz_address = user.get("pvz_address")
+        
+        is_default = dest == DEFAULT_DEST or not dest
+        
+        return {
+            "exists": True,
+            "dest": dest,
+            "address": pvz_address,
+            "is_default": is_default
+        }

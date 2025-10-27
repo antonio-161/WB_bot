@@ -1,900 +1,395 @@
+"""
+Клавиатуры для бота.
+Оптимизированная версия с фабриками и переиспользованием кода.
+"""
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from typing import Dict, List
+from typing import List, Dict, Optional
 
+
+# ============= ФАБРИКИ КНОПОК =============
+
+def btn(text: str, callback_data: str) -> InlineKeyboardButton:
+    """Создать inline кнопку."""
+    return InlineKeyboardButton(text=text, callback_data=callback_data)
+
+
+def btn_url(text: str, url: str) -> InlineKeyboardButton:
+    """Создать кнопку с URL."""
+    return InlineKeyboardButton(text=text, url=url)
+
+
+def back_btn(callback_data: str = "back_to_menu") -> InlineKeyboardButton:
+    """Кнопка 'Назад'."""
+    return btn("« Назад", callback_data)
+
+
+def cancel_btn() -> InlineKeyboardButton:
+    """Кнопка 'Отмена'."""
+    return btn("❌ Отмена", "cancel")
+
+
+# ============= БАЗОВЫЕ КЛАВИАТУРЫ =============
+
+def simple_kb(*buttons_rows: List[InlineKeyboardButton]) -> InlineKeyboardMarkup:
+    """Создать клавиатуру из списка рядов кнопок."""
+    return InlineKeyboardMarkup(inline_keyboard=list(buttons_rows))
+
+
+def single_button_kb(text: str, callback_data: str) -> InlineKeyboardMarkup:
+    """Клавиатура с одной кнопкой."""
+    return simple_kb([btn(text, callback_data)])
+
+
+def back_kb(callback_data: str = "back_to_menu") -> InlineKeyboardMarkup:
+    """Клавиатура только с кнопкой 'Назад'."""
+    return simple_kb([back_btn(callback_data)])
+
+
+# ============= ГЛАВНОЕ МЕНЮ =============
+
+def main_inline_kb() -> InlineKeyboardMarkup:
+    """Главное меню."""
+    return simple_kb(
+        [btn("➕ Добавить товар", "add_product")],
+        [btn("📦 Мои товары", "list_products")],
+        [btn("🗑 Удалить товар", "remove_product")],
+        [btn("📋 Экспорт данных", "export_menu")],
+        [btn("📊 Моя статистика", "my_stats")],
+        [btn("⚙️ Настройки", "settings")]
+    )
+
+
+def create_smart_menu(products_count: int, max_links: int, plan: str) -> InlineKeyboardMarkup:
+    """Умное меню в зависимости от контекста."""
+    buttons = []
+    
+    # Логика добавления
+    if products_count == 0:
+        buttons.append([btn("🎯 Добавить первый товар", "add_product")])
+    elif products_count < max_links:
+        buttons.extend([
+            [btn("➕ Добавить товар", "add_product")],
+            [btn("📦 Мои товары", "list_products")]
+        ])
+    else:
+        buttons.extend([
+            [btn("⚠️ Лимит достигнут - Улучшить тариф", "upsell_limit_reached")],
+            [btn("📦 Мои товары", "list_products")]
+        ])
+    
+    # Дополнительные кнопки
+    buttons.append([
+        btn("📊 Статистика", "my_stats"),
+        btn("⚙️ Настройки", "settings")
+    ])
+    
+    # Апсейл для бесплатного тарифа
+    if plan == "Бесплатный" and products_count >= 3:
+        buttons.append([btn("🚀 Хотите больше возможностей?", "show_upgrade_benefits")])
+    
+    return simple_kb(*buttons)
+
+
+# ============= ОНБОРДИНГ =============
 
 def start_kb() -> InlineKeyboardMarkup:
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="➕ Добавить товар и начать экономить",
-                    callback_data="onboarding_add_first"
-                )],
-                [InlineKeyboardButton(
-                    text="📋 Сначала выбрать тариф",
-                    callback_data="show_plans_first"
-                )]
-            ])
-    return kb
-
-
-def create_smart_menu(
-    products_count: int,
-    max_links: int,
-    plan: str
-) -> InlineKeyboardMarkup:
-    """Умное меню, адаптирующееся под контекст пользователя."""
-
-    buttons = []
-
-    # Если нет товаров - приоритет на добавление
-    if products_count == 0:
-        buttons.append([InlineKeyboardButton(
-            text="🎯 Добавить первый товар",
-            callback_data="add_product"
-        )])
-    # Если есть товары, но не лимит
-    elif products_count < max_links:
-        buttons.append([InlineKeyboardButton(
-            text="➕ Добавить товар",
-            callback_data="add_product"
-        )])
-        buttons.append([InlineKeyboardButton(
-            text="📦 Мои товары",
-            callback_data="list_products"
-        )])
-    # Если лимит достигнут - пушим на апгрейд
-    else:
-        buttons.append([InlineKeyboardButton(
-            text="⚠️ Лимит достигнут - Улучшить тариф",
-            callback_data="upsell_limit_reached"
-        )])
-        buttons.append([InlineKeyboardButton(
-            text="📦 Мои товары",
-            callback_data="list_products"
-        )])
-
-    # Дополнительные действия
-    buttons.append([
-        InlineKeyboardButton(text="📊 Статистика", callback_data="my_stats"),
-        InlineKeyboardButton(text="⚙️ Настройки", callback_data="settings")
-    ])
-
-    # Для бесплатного тарифа - ненавязчивое напоминание
-    if plan == "Бесплатный" and products_count >= 3:
-        buttons.append([InlineKeyboardButton(
-            text="🚀 Хотите больше возможностей?",
-            callback_data="show_upgrade_benefits"
-        )])
-
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def show_plans_kb() -> InlineKeyboardMarkup:
-    """Клавиатура с тарифами."""
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="💼 Смотреть тариф Базовый",
-            callback_data="plan_basic"
-        )],
-        [InlineKeyboardButton(
-            text="🚀 Смотреть тариф Продвинутый",
-            callback_data="plan_pro"
-        )],
-        [InlineKeyboardButton(
-            text="« Назад",
-            callback_data="back_to_menu"
-        )]
-    ])
-    return kb
-
-
-def upsell_kb() -> InlineKeyboardMarkup:
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="🚀 Улучшить до Базового (199₽/мес)",
-            callback_data="plan_basic"
-        )],
-        [InlineKeyboardButton(
-            text="💎 Смотреть все тарифы",
-            callback_data="show_plans_first"
-        )],
-        [InlineKeyboardButton(
-            text="🗑 Удалить старый товар",
-            callback_data="remove_product"
-        )],
-        [InlineKeyboardButton(
-            text="« Назад",
-            callback_data="back_to_menu"
-        )]
-    ])
-    return kb
+    """Стартовая клавиатура для новых пользователей."""
+    return simple_kb(
+        [btn("➕ Добавить товар и начать экономить", "onboarding_add_first")],
+        [btn("📋 Сначала выбрать тариф", "show_plans_first")]
+    )
 
 
 def onboarding_kb() -> InlineKeyboardMarkup:
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(
-                            text="➕ Добавить ещё товар",
-                            callback_data="add_product"
-                        )],
-                        [InlineKeyboardButton(
-                            text="📋 Выбрать тариф",
-                            callback_data="show_plans_first"
-                        )],
-                        [InlineKeyboardButton(
-                            text="📦 Мои товары",
-                            callback_data="list_products"
-                        )]
-                    ]),
-    return kb
-
-
-def main_inline_kb() -> InlineKeyboardMarkup:
-    """Главное меню пользователя через InlineKeyboard."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="➕ Добавить товар",
-                    callback_data="add_product"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📦 Мои товары",
-                    callback_data="list_products"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗑 Удалить товар",
-                    callback_data="remove_product"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📋 Экспорт данных",
-                    callback_data="export_menu"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📊 Моя статистика",
-                    callback_data="my_stats"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⚙️ Настройки",
-                    callback_data="settings"
-                ),
-            ],
-        ]
+    """Клавиатура после добавления первого товара."""
+    return simple_kb(
+        [btn("➕ Добавить ещё товар", "add_product")],
+        [btn("📋 Выбрать тариф", "show_plans_first")],
+        [btn("📦 Мои товары", "list_products")]
     )
-    return kb
-
-
-def choose_plan_kb() -> InlineKeyboardMarkup:
-    """Клавиатура выбора тарифа."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🎁 Бесплатный (5 товаров)",
-                    callback_data="plan_free",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💼 Базовый (50 товаров)",
-                    callback_data="plan_basic",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🚀 Продвинутый (250 товаров)",
-                    callback_data="plan_pro",
-                )
-            ],
-        ]
-    )
-    return kb
-
-
-def products_inline(products: list[dict]) -> InlineKeyboardMarkup:
-    """Клавиатура с отслеживаемыми товарами."""
-    inline_rows = []
-
-    for p in products:
-        name = p.get("name", f"Товар {p['nm_id']}")
-        display_name = name[:40] + "..." if len(name) > 40 else name
-
-        inline_rows.append([
-            InlineKeyboardButton(
-                text=f"📊 {display_name}",
-                callback_data=f"product_detail:{p['nm_id']}"
-            )
-        ])
-
-    # Кнопки действий
-    inline_rows.append([
-        InlineKeyboardButton(
-            text="➕ Добавить товар",
-            callback_data="add_product"
-        ),
-    ])
-    inline_rows.append([
-        InlineKeyboardButton(
-            text="« Назад",
-            callback_data="back_to_menu"
-        ),
-    ])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=inline_rows)
-    return kb
-
-
-def product_detail_kb(nm_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура детальной информации о товаре."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📈 График цен",
-                    callback_data=f"show_graph:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔔 Настроить уведомления",
-                    callback_data=f"notify_settings:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✏️ Переименовать",
-                    callback_data=f"rename:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔗 Открыть на WB",
-                    url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🗑 Удалить",
-                    callback_data=f"rm:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📋 Вернуться к списку",
-                    callback_data="list_products"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def settings_kb() -> InlineKeyboardMarkup:
-    """Клавиатура настроек."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 Скидка кошелька",
-                    callback_data="set_discount"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📍 Мой ПВЗ",
-                    callback_data="show_pvz"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💰 Мой тариф",
-                    callback_data="my_plan"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="« Назад",
-                    callback_data="back_to_menu"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def notify_mode_kb(nm_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура выбора режима уведомлений."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📊 По проценту снижения",
-                    callback_data=f"notify_percent:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💰 По целевой цене",
-                    callback_data=f"notify_threshold:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔕 Отключить (все уведомления)",
-                    callback_data=f"notify_all:{nm_id}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="« Назад",
-                    callback_data=f"product_detail:{nm_id}"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def confirm_remove_kb(nm_id: int) -> InlineKeyboardMarkup:
-    """Подтверждение удаления товара."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Да, удалить",
-                    callback_data=f"confirm_remove:{nm_id}"
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отмена",
-                    callback_data="list_products"
-                ),
-            ]
-        ]
-    )
-    return kb
-
-
-def reset_pvz_kb() -> InlineKeyboardMarkup:
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 Изменить ПВЗ",
-                    callback_data="set_pvz"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 Назад",
-                    callback_data="settings"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def sizes_inline_kb(nm: int, sizes: list[dict]) -> InlineKeyboardMarkup:
-    """Генерация inline-клавиатуры с размерами товара."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text=s.get("name"),
-                callback_data=f"select_size:{nm}:{s.get('name')}"
-            )]
-            for s in sizes
-        ]
-    )
-    return kb
-
-
-def back_to_settings_kb() -> InlineKeyboardMarkup:
-    """Кнопка возврата к настройкам."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="« Назад к настройкам",
-                    callback_data="settings"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def back_to_product_kb(nm_id: int) -> InlineKeyboardMarkup:
-    """Кнопка возврата к списку товаров."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="« Назад в карточку товара",
-                    callback_data=f"back_to_product:{nm_id}"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def upgrade_plan_kb() -> InlineKeyboardMarkup:
-    """Клавиатура для улучшения тарифа."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬆️ Улучшить тариф",
-                    callback_data="upgrade_plan"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="« Назад",
-                    callback_data="back_to_menu"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def export_format_kb() -> InlineKeyboardMarkup:
-    """Выбор формата экспорта."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📗 Excel (.xlsx)",
-                    callback_data="export_excel"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="📄 CSV (.csv)",
-                    callback_data="export_csv"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="« Назад",
-                    callback_data="back_to_menu"
-                ),
-            ],
-        ]
-    )
-    return kb
-
-
-def plan_detail_kb(plan_key: str) -> InlineKeyboardMarkup:
-    """Клавиатура детального описания тарифа."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Выбрать этот тариф",
-                    callback_data=f"confirm_{plan_key}"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="« Назад к выбору",
-                    callback_data="back_to_plan_choice"
-                ),
-            ],
-        ]
-    )
-    return kb
 
 
 def onboarding_discount_kb() -> InlineKeyboardMarkup:
-    """Клавиатура для настройки скидки при онбординге."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 Установить скидку",
-                    callback_data="onboarding_set_discount"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⏭ Пропустить",
-                    callback_data="onboarding_skip_discount"
-                ),
-            ],
-        ]
+    """Онбординг: настройка скидки."""
+    return simple_kb(
+        [btn("💳 Установить скидку", "onboarding_set_discount")],
+        [btn("⏭ Пропустить", "onboarding_skip_discount")]
     )
-    return kb
 
 
 def onboarding_pvz_kb() -> InlineKeyboardMarkup:
-    """Клавиатура для настройки ПВЗ при онбординге."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📍 Установить ПВЗ",
-                    callback_data="onboarding_set_pvz"
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⏭ Пропустить (Москва)",
-                    callback_data="onboarding_skip_pvz"
-                ),
-            ],
-        ]
+    """Онбординг: настройка ПВЗ."""
+    return simple_kb(
+        [btn("📍 Установить ПВЗ", "onboarding_set_pvz")],
+        [btn("⏭ Пропустить (Москва)", "onboarding_skip_pvz")]
     )
-    return kb
 
 
-def back_to_menu_kb() -> InlineKeyboardMarkup:
-    """Кнопка возврата в главное меню."""
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🏠 Главное меню",
-                callback_data="back_to_menu"
-            )]
-        ]
+# ============= ТАРИФЫ =============
+
+def choose_plan_kb() -> InlineKeyboardMarkup:
+    """Выбор тарифа."""
+    return simple_kb(
+        [btn("🎁 Бесплатный (5 товаров)", "plan_free")],
+        [btn("💼 Базовый (50 товаров)", "plan_basic")],
+        [btn("🚀 Продвинутый (250 товаров)", "plan_pro")]
     )
-    return kb
 
 
-def remove_products_kb(products: List[Dict]) -> InlineKeyboardMarkup:
-    """
-    Клавиатура для выбора товара на удаление.
+def show_plans_kb() -> InlineKeyboardMarkup:
+    """Просмотр тарифов."""
+    return simple_kb(
+        [btn("💼 Смотреть тариф Базовый", "plan_basic")],
+        [btn("🚀 Смотреть тариф Продвинутый", "plan_pro")],
+        [back_btn()]
+    )
 
-    Args:
-        products: Список словарей с ключами 'nm_id' и 'display_name'
 
-    Returns:
-        InlineKeyboardMarkup с кнопками товаров и кнопкой "Назад"
-    """
+def plan_detail_kb(plan_key: str) -> InlineKeyboardMarkup:
+    """Детали тарифа с подтверждением."""
+    return simple_kb(
+        [btn("✅ Выбрать этот тариф", f"confirm_{plan_key}")],
+        [btn("« Назад к выбору", "back_to_plan_choice")]
+    )
+
+
+def upgrade_plan_kb() -> InlineKeyboardMarkup:
+    """Улучшение тарифа."""
+    return simple_kb(
+        [btn("⬆️ Улучшить тариф", "upgrade_plan")],
+        [back_btn()]
+    )
+
+
+def upsell_kb() -> InlineKeyboardMarkup:
+    """Upsell клавиатура."""
+    return simple_kb(
+        [btn("🚀 Улучшить до Базового (199₽/мес)", "plan_basic")],
+        [btn("💎 Смотреть все тарифы", "show_plans_first")],
+        [btn("🗑 Удалить старый товар", "remove_product")],
+        [back_btn()]
+    )
+
+
+# ============= НАСТРОЙКИ =============
+
+def settings_kb() -> InlineKeyboardMarkup:
+    """Меню настроек."""
+    return simple_kb(
+        [btn("💳 Скидка кошелька", "set_discount")],
+        [btn("📍 Мой ПВЗ", "show_pvz")],
+        [btn("💰 Мой тариф", "my_plan")],
+        [back_btn()]
+    )
+
+
+def back_to_settings_kb() -> InlineKeyboardMarkup:
+    """Возврат к настройкам."""
+    return back_kb("settings")
+
+
+def reset_pvz_kb() -> InlineKeyboardMarkup:
+    """Управление ПВЗ."""
+    return simple_kb(
+        [btn("🔄 Изменить ПВЗ", "set_pvz")],
+        [btn("🔙 Назад", "settings")]
+    )
+
+
+# ============= ТОВАРЫ =============
+
+def sizes_inline_kb(nm: int, sizes: List[Dict]) -> InlineKeyboardMarkup:
+    """Выбор размера товара."""
+    buttons = [[btn(s.get("name"), f"select_size:{nm}:{s.get('name')}")] for s in sizes]
+    return simple_kb(*buttons)
+
+
+def products_inline(products: List[Dict]) -> InlineKeyboardMarkup:
+    """Список товаров с кнопками."""
     buttons = []
-
-    for product in products:
-        display_name = product['display_name']
-        # Обрезаем название для удобства отображения
-        if len(display_name) > 30:
-            display_name = display_name[:27] + "..."
-
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"❌ {display_name}",
-                callback_data=f"rm:{product['nm_id']}"
-            )
-        ])
-
-    # Добавляем кнопку "Назад"
-    buttons.append([
-        InlineKeyboardButton(
-            text="« Назад",
-            callback_data="back_to_menu"
-        )
+    
+    # Кнопки товаров
+    for p in products:
+        name = p.get("name", f"Товар {p['nm_id']}")
+        display_name = name[:40] + "..." if len(name) > 40 else name
+        buttons.append([btn(f"📊 {display_name}", f"product_detail:{p['nm_id']}")])
+    
+    # Действия
+    buttons.extend([
+        [btn("➕ Добавить товар", "add_product")],
+        [back_btn()]
     ])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    return kb
+    
+    return simple_kb(*buttons)
 
 
 def products_list_kb(
     products: List[Dict],
     has_filters: bool = False,
     show_export: bool = False,
-    show_upgrade: bool = False,
-    slots_info: str = ""
+    show_upgrade: bool = False
 ) -> InlineKeyboardMarkup:
-    """
-    Улучшенная клавиатура для списка товаров с поддержкой фильтров.
-    
-    Args:
-        products: Список товаров с nm_id и display_name
-        has_filters: Показывать ли кнопки фильтров
-        show_export: Показывать ли кнопку экспорта (для Pro)
-        show_upgrade: Показывать ли кнопку апгрейда (для Free)
-        slots_info: Текст для отображения информации о слотах
-    
-    Returns:
-        InlineKeyboardMarkup
-    """
+    """Расширенный список товаров с фильтрами."""
     buttons = []
     
-    # Кнопки товаров (показываем первые 10 для удобства)
-    for product in products[:10]:
-        display_name = product['display_name']
+    # Товары (первые 10)
+    for p in products[:10]:
+        display_name = p['display_name']
         if len(display_name) > 35:
             display_name = display_name[:32] + "..."
-        
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"📊 {display_name}",
-                callback_data=f"product_detail:{product['nm_id']}"
-            )
-        ])
+        buttons.append([btn(f"📊 {display_name}", f"product_detail:{p['nm_id']}")])
     
-    # Если товаров больше 10, добавляем кнопку "Показать все"
+    # Показать все
     if len(products) > 10:
-        buttons.append([
-            InlineKeyboardButton(
-                text=f"📋 Показать все ({len(products)} товаров)",
-                callback_data="show_all_products"
-            )
-        ])
+        buttons.append([btn(f"📋 Показать все ({len(products)} товаров)", "show_all_products")])
     
-    # Фильтры (для платных тарифов)
+    # Фильтры
     if has_filters:
         buttons.append([
-            InlineKeyboardButton(
-                text="🔥 Лучшие скидки",
-                callback_data="filter_best_deals"
-            ),
-            InlineKeyboardButton(
-                text="📉 Падающие цены",
-                callback_data="filter_price_drops"
-            )
+            btn("🔥 Лучшие скидки", "filter_best_deals"),
+            btn("📉 Падающие цены", "filter_price_drops")
         ])
     
-    # Основные действия
+    # Действия
     buttons.append([
-        InlineKeyboardButton(
-            text="➕ Добавить товар",
-            callback_data="add_product"
-        ),
-        InlineKeyboardButton(
-            text="🗑 Удалить товар",
-            callback_data="remove_product"
-        )
+        btn("➕ Добавить товар", "add_product"),
+        btn("🗑 Удалить товар", "remove_product")
     ])
     
     # Экспорт для Pro
     if show_export:
-        buttons.append([
-            InlineKeyboardButton(
-                text="📋 Экспорт в Excel/CSV",
-                callback_data="export_menu"
-            )
-        ])
+        buttons.append([btn("📋 Экспорт в Excel/CSV", "export_menu")])
     
     # Апгрейд для Free
     if show_upgrade:
-        buttons.append([
-            InlineKeyboardButton(
-                text="🚀 Улучшить тариф (до 50 товаров)",
-                callback_data="upsell_from_products_list"
-            )
-        ])
+        buttons.append([btn("🚀 Улучшить тариф (до 50 товаров)", "upsell_from_products_list")])
     
-    # Кнопка "Назад"
-    buttons.append([
-        InlineKeyboardButton(
-            text="« Назад",
-            callback_data="back_to_menu"
-        )
-    ])
+    buttons.append([back_btn()])
     
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    return kb
+    return simple_kb(*buttons)
 
 
-def product_navigation_kb(
-    nm_id: int,
-    current_index: int,
-    total_products: int,
-    prev_nm_id: int = None,
-    next_nm_id: int = None
-) -> InlineKeyboardMarkup:
-    """
-    Клавиатура для навигации по товарам в карточке.
-    
-    Args:
-        nm_id: Текущий артикул
-        current_index: Текущий индекс товара (1-based)
-        total_products: Общее количество товаров
-        prev_nm_id: Артикул предыдущего товара (если есть)
-        next_nm_id: Артикул следующего товара (если есть)
-    
-    Returns:
-        InlineKeyboardMarkup с навигацией
-    """
+def product_detail_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Детальная карточка товара."""
+    return simple_kb(
+        [btn("📈 График цен", f"show_graph:{nm_id}")],
+        [btn("🔔 Настроить уведомления", f"notify_settings:{nm_id}")],
+        [btn("✏️ Переименовать", f"rename:{nm_id}")],
+        [btn_url("🔗 Открыть на WB", f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx")],
+        [btn("🗑 Удалить", f"rm:{nm_id}")],
+        [btn("📋 Вернуться к списку", "list_products")]
+    )
+
+
+def remove_products_kb(products: List[Dict]) -> InlineKeyboardMarkup:
+    """Список товаров для удаления."""
     buttons = []
     
-    # Навигация (только если товаров больше 1)
-    if total_products > 1:
-        nav_row = []
-        
-        if prev_nm_id:
-            nav_row.append(
-                InlineKeyboardButton(
-                    text="⬅️ Предыдущий",
-                    callback_data=f"nav_product:{prev_nm_id}:{current_index-1}"
-                )
-            )
-        
-        # Индикатор позиции
-        nav_row.append(
-            InlineKeyboardButton(
-                text=f"• {current_index}/{total_products} •",
-                callback_data="noop"
-            )
-        )
-        
-        if next_nm_id:
-            nav_row.append(
-                InlineKeyboardButton(
-                    text="Следующий ➡️",
-                    callback_data=f"nav_product:{next_nm_id}:{current_index+1}"
-                )
-            )
-        
-        buttons.append(nav_row)
+    for product in products:
+        display_name = product['display_name']
+        if len(display_name) > 30:
+            display_name = display_name[:27] + "..."
+        buttons.append([btn(f"❌ {display_name}", f"rm:{product['nm_id']}")])
     
-    # Основные действия
-    buttons.extend([
+    buttons.append([back_btn()])
+    return simple_kb(*buttons)
+
+
+def confirm_remove_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Подтверждение удаления."""
+    return simple_kb(
         [
-            InlineKeyboardButton(
-                text="📈 График цен",
-                callback_data=f"show_graph:{nm_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔔 Настроить уведомления",
-                callback_data=f"notify_settings:{nm_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="✏️ Переименовать",
-                callback_data=f"rename:{nm_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🔗 Открыть на WB",
-                url=f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🗑 Удалить",
-                callback_data=f"rm:{nm_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="📋 Вернуться к списку",
-                callback_data="list_products"
-            )
+            btn("✅ Да, удалить", f"confirm_remove:{nm_id}"),
+            btn("❌ Отмена", "list_products")
         ]
-    ])
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    return kb
+    )
 
 
-# Обработчик "noop" для неактивных кнопок
-async def handle_noop(query):
-    """Заглушка для неактивных кнопок."""
-    await query.answer()
+def back_to_product_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Возврат к карточке товара."""
+    return back_kb(f"back_to_product:{nm_id}")
 
+
+# ============= УВЕДОМЛЕНИЯ =============
+
+def notify_mode_kb(nm_id: int) -> InlineKeyboardMarkup:
+    """Выбор режима уведомлений."""
+    return simple_kb(
+        [btn("📊 По проценту снижения", f"notify_percent:{nm_id}")],
+        [btn("💰 По целевой цене", f"notify_threshold:{nm_id}")],
+        [btn("🔕 Отключить (все уведомления)", f"notify_all:{nm_id}")],
+        [btn("« Назад", f"product_detail:{nm_id}")]
+    )
+
+
+# ============= ЭКСПОРТ =============
+
+def export_format_kb() -> InlineKeyboardMarkup:
+    """Выбор формата экспорта."""
+    return simple_kb(
+        [btn("📗 Excel (.xlsx)", "export_excel")],
+        [btn("📄 CSV (.csv)", "export_csv")],
+        [back_btn()]
+    )
+
+
+# ============= НАВИГАЦИЯ =============
+
+def back_to_menu_kb() -> InlineKeyboardMarkup:
+    """Возврат в главное меню."""
+    return back_kb()
+
+
+# ============= АДМИН ПАНЕЛЬ =============
 
 def admin_menu_kb() -> InlineKeyboardMarkup:
-    """Главное меню администратора."""
-    return InlineKeyboardMarkup(inline_keyboard=[
+    """Админ панель."""
+    return simple_kb(
         [
-            InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"),
-            InlineKeyboardButton(text="🏥 Здоровье", callback_data="admin_health")
+            btn("📊 Статистика", "admin_stats"),
+            btn("🏥 Здоровье", "admin_health")
         ],
         [
-            InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"),
-            InlineKeyboardButton(text="📦 Товары", callback_data="admin_products")
+            btn("👥 Пользователи", "admin_users"),
+            btn("📦 Товары", "admin_products")
         ],
         [
-            InlineKeyboardButton(text="⚠️ Ошибки API", callback_data="admin_errors"),
-            InlineKeyboardButton(text="🔧 Система", callback_data="admin_system")
+            btn("⚠️ Ошибки API", "admin_errors"),
+            btn("🔧 Система", "admin_system")
         ],
         [
-            InlineKeyboardButton(text="💳 Платежи", callback_data="admin_payments"),
-            InlineKeyboardButton(text="📨 Рассылка", callback_data="admin_broadcast")
+            btn("💳 Платежи", "admin_payments"),
+            btn("📨 Рассылка", "admin_broadcast")
         ],
-        [
-            InlineKeyboardButton(text="🔄 Обновить", callback_data="admin_menu")
-        ]
-    ])
+        [btn("🔄 Обновить", "admin_menu")]
+    )
 
 
 def back_to_admin_menu_kb() -> InlineKeyboardMarkup:
-    """Кнопка возврата в админ меню."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="« Назад в меню", callback_data="admin_menu")]
-    ])
+    """Возврат в админ меню."""
+    return back_kb("admin_menu")
 
 
 def user_management_kb(user_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура управления пользователем."""
-    return InlineKeyboardMarkup(inline_keyboard=[
+    """Управление пользователем."""
+    return simple_kb(
         [
-            InlineKeyboardButton(
-                text="📋 Изменить тариф",
-                callback_data=f"admin_change_plan:{user_id}"
-            ),
-            InlineKeyboardButton(
-                text="🚫 Заблокировать",
-                callback_data=f"admin_ban_user:{user_id}"
-            )
+            btn("📋 Изменить тариф", f"admin_change_plan:{user_id}"),
+            btn("🚫 Заблокировать", f"admin_ban_user:{user_id}")
         ],
         [
-            InlineKeyboardButton(
-                text="📊 Детали",
-                callback_data=f"admin_user_details:{user_id}"
-            ),
-            InlineKeyboardButton(
-                text="🗑 Удалить данные",
-                callback_data=f"admin_delete_user:{user_id}"
-            )
+            btn("📊 Детали", f"admin_user_details:{user_id}"),
+            btn("🗑 Удалить данные", f"admin_delete_user:{user_id}")
         ],
-        [
-            InlineKeyboardButton(
-                text="« Назад",
-                callback_data="admin_users"
-            )
-        ]
-    ])
+        [btn("« Назад", "admin_users")]
+    )
 
 
 def plan_selection_kb(user_id: int) -> InlineKeyboardMarkup:
-    """Клавиатура выбора тарифа для пользователя."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="🎁 Free (5)",
-                callback_data=f"admin_set_plan:{user_id}:plan_free:5"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💼 Basic (50)",
-                callback_data=f"admin_set_plan:{user_id}:plan_basic:50"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="🚀 Pro (250)",
-                callback_data=f"admin_set_plan:{user_id}:plan_pro:250"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="« Отмена",
-                callback_data=f"admin_user_manage:{user_id}"
-            )
-        ]
-    ])
-
-
-def broadcast_confirm_kb(message_text: str) -> InlineKeyboardMarkup:
-    """Подтверждение рассылки."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="✅ Отправить всем",
-                callback_data="admin_broadcast_confirm"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="admin_menu"
-            )
-        ]
-    ])
+    """Выбор тарифа для пользователя (админ)."""
+    return simple_kb(
+        [btn("🎁 Free (5)", f"admin_set_plan:{user_id}:plan_free:5")],
+        [btn("💼 Basic (50)", f"admin_set_plan:{user_id}:plan_basic:50")],
+        [btn("🚀 Pro (250)", f"admin_set_plan:{user_id}:plan_pro:250")],
+        [btn("« Отмена", f"admin_user_manage:{user_id}")]
+    )

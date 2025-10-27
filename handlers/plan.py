@@ -1,7 +1,11 @@
+"""
+Обработчики для работы с тарифами.
+"""
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
+
+from services.user_service import UserService
 from handlers.settings import start_onboarding
-from services.db import DB
 from keyboards.kb import main_inline_kb, plan_detail_kb, choose_plan_kb
 from constants import PLAN_DESCRIPTIONS
 
@@ -40,7 +44,10 @@ async def show_plan_details(query: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("confirm_plan_"))
-async def confirm_plan_callback(query: CallbackQuery, db: DB):
+async def confirm_plan_callback(
+    query: CallbackQuery,
+    user_service: UserService
+):
     """Подтверждение выбора тарифа."""
     plan_key = query.data.replace("confirm_", "")
     plan = PLANS.get(plan_key)
@@ -49,15 +56,21 @@ async def confirm_plan_callback(query: CallbackQuery, db: DB):
         await query.answer("❌ Неизвестный тариф", show_alert=True)
         return
 
-    # Сохраняем тариф в БД
-    await db.set_plan(
-        user_id=query.from_user.id,
-        plan_key=plan_key,
-        plan_name=plan["name"],
-        max_links=plan["max_links"]
-    )
+    user_id = query.from_user.id
 
-    # Формируем персонализированное сообщение в зависимости от тарифа
+    # Обновляем тариф через сервис
+    success = await user_service.update_plan(
+        user_id,
+        plan_key,
+        plan["name"],
+        plan["max_links"]
+    )
+    
+    if not success:
+        await query.answer("❌ Ошибка при обновлении тарифа", show_alert=True)
+        return
+
+    # Формируем персонализированное сообщение
     if plan_key == "plan_free":
         next_steps = (
             "🎯 <b>Что дальше?</b>\n"
@@ -97,9 +110,9 @@ async def confirm_plan_callback(query: CallbackQuery, db: DB):
         reply_markup=main_inline_kb()
     )
 
-    # Запускаем процесс настройки только для платных тарифов
+    # Запускаем онбординг для платных тарифов
     if plan_key in ["plan_basic", "plan_pro"]:
-        await start_onboarding(query.message, db, query.from_user.id, plan_key)
+        await start_onboarding(query.message, user_service, user_id, plan_key)
 
     await query.answer(f"✅ Тариф {plan['name']} активирован!", show_alert=False)
 

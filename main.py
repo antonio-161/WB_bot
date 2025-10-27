@@ -1,6 +1,5 @@
 """
 Главный файл бота - точка входа.
-Минимум бизнес-логики, максимум координации сервисов.
 """
 import asyncio
 import logging
@@ -21,12 +20,13 @@ from services.reporting_service import ReportingService
 from handlers import (
     plan as plan_h,
     start as start_h,
-    products as products_h,
     settings as settings_h,
     region as region_h,
     stats as stats_h,
     onboarding as onboarding_h,
-    admin as admin_h
+    admin as admin_h,
+    products as products_h,
+    export as export_h
 )
 
 from utils.rate_limiter import RateLimitMiddleware
@@ -40,9 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 class DependencyInjectionMiddleware(BaseMiddleware):
-    """
-    Middleware для автоматической инъекции зависимостей в handlers.
-    """
+    """Middleware для автоматической инъекции зависимостей в handlers."""
     
     def __init__(self, container: Container):
         super().__init__()
@@ -54,13 +52,20 @@ class DependencyInjectionMiddleware(BaseMiddleware):
         event: Any,
         data: Dict[str, Any]
     ) -> Any:
-        # Добавляем репозитории
+        # Инжектим репозитории
         data["user_repo"] = self.container.get_user_repo()
         data["product_repo"] = self.container.get_product_repo()
         data["price_history_repo"] = self.container.get_price_history_repo()
+        
+        # Инжектим бизнес-сервисы
+        data["user_service"] = self.container.get_user_service()
+        data["product_service"] = self.container.get_product_service()
+        data["settings_service"] = self.container.get_settings_service()
+        
+        # Container для доступа к другим сервисам
         data["container"] = self.container
         
-        # Legacy поддержка (для старых handlers)
+        # Legacy поддержка (для старых частей кода)
         data["db"] = self.container.db
         data["price_fetcher"] = self.container.price_fetcher
         
@@ -72,14 +77,7 @@ async def monitor_loop(
     reporting_service: ReportingService,
     poll_interval: int
 ):
-    """
-    Главный цикл мониторинга цен.
-    
-    Args:
-        monitor_service: Сервис мониторинга
-        reporting_service: Сервис отчётов
-        poll_interval: Интервал проверки в секундах
-    """
+    """Главный цикл мониторинга цен."""
     logger.info(f"🔄 Запущен цикл мониторинга (интервал: {poll_interval}s)")
     
     while True:
@@ -108,22 +106,21 @@ async def monitor_loop(
                 delay_between_batches=5.0
             )
             
-            # Логируем результаты цикла
+            # Логируем результаты
             logger.info(reporting_service.format_cycle_log(cycle_metrics))
             
-            # Обновляем метрики для отчёта
+            # Обновляем метрики
             reporting_service.update_metrics(cycle_metrics)
             
             # Отправляем отчёт если нужно
             if reporting_service.should_send_report():
                 await reporting_service.send_hourly_report()
             
-            # Проверяем метрики ошибок после каждого цикла
+            # Проверяем метрики ошибок
             from utils.error_tracker import get_error_tracker
             error_tracker = get_error_tracker()
             await error_tracker.check_and_alert()
             
-            # Ждём до следующего цикла
             await asyncio.sleep(poll_interval)
             
         except Exception as e:
@@ -135,35 +132,35 @@ async def setup_bot_commands(bot: Bot):
     """Установка команд бота."""
     await bot.set_my_commands([
         BotCommand(command="start", description="🏠 Главное меню"),
-        BotCommand(command="admin", description="🔧 Админ панель (только для админа)"),
+        BotCommand(
+            command="admin", description="🔧 Админ панель (только для админа)"
+        ),
     ])
     logger.info("✅ Команды бота установлены")
 
 
 def setup_dispatcher(dp: Dispatcher, container: Container):
-    """
-    Настройка диспетчера: подключение handlers и middleware.
+    """Настройка диспетчера: подключение handlers и middleware."""
     
-    Args:
-        dp: Dispatcher
-        container: Контейнер зависимостей
-    """
     # Подключаем handlers
     dp.include_router(start_h.router)
     dp.include_router(plan_h.router)
-    dp.include_router(products_h.router)
     dp.include_router(settings_h.router)
     dp.include_router(region_h.router)
     dp.include_router(stats_h.router)
     dp.include_router(onboarding_h.router)
     dp.include_router(admin_h.router)
+    dp.include_router(products_h.router)
+    dp.include_router(export_h.router)
     
     # Подключаем middleware
     dp.message.middleware(RateLimitMiddleware(rate_limit=3))
-    dp.message.middleware(DependencyInjectionMiddleware(container))
-    dp.callback_query.middleware(DependencyInjectionMiddleware(container))
+    dp.update.middleware(DependencyInjectionMiddleware(container))
     
-    # Legacy поддержка (TODO: удалить после рефакторинга)
+    # Сохраняем container в bot для доступа из handlers
+    dp["container"] = container
+    
+    # Legacy поддержка
     dp["db"] = container.db
     dp["price_fetcher"] = container.price_fetcher
     
@@ -171,12 +168,7 @@ def setup_dispatcher(dp: Dispatcher, container: Container):
 
 
 async def initialize_services(bot: Bot) -> tuple:
-    """
-    Инициализация всех сервисов.
-    
-    Returns:
-        tuple: (container, monitor_service, background_service, reporting_service)
-    """
+    """Инициализация всех сервисов."""
     # Создаём подключение к БД
     db = DB(str(settings.DATABASE_DSN))
     await db.connect()
@@ -185,7 +177,7 @@ async def initialize_services(bot: Bot) -> tuple:
     # Создаём PriceFetcher
     fetcher = PriceFetcher(use_xpow=settings.USE_XPOW)
     if settings.USE_XPOW:
-        logger.info("✅ X-POW токен включён (для получения данных о всех складах)")
+        logger.info("✅ X-POW токен включён")
     else:
         logger.info("ℹ️ X-POW токен отключён")
     
@@ -203,13 +195,7 @@ async def initialize_services(bot: Bot) -> tuple:
 
 
 async def cleanup_services(container: Container, background_tasks: list):
-    """
-    Очистка ресурсов при завершении.
-    
-    Args:
-        container: Контейнер зависимостей
-        background_tasks: Список фоновых задач
-    """
+    """Очистка ресурсов при завершении."""
     logger.info("🛑 Начинаю остановку сервисов...")
     
     # Отменяем фоновые задачи
@@ -245,10 +231,13 @@ async def main():
     container, monitor_service, background_service, reporting_service = \
         await initialize_services(bot)
     
+    # Сохраняем container в bot
+    # bot["container"] = container
+    
     # Настраиваем dispatcher
     setup_dispatcher(dp, container)
     
-    # Устанавливаем команды бота
+    # Устанавливаем команды
     await setup_bot_commands(bot)
     
     # Запускаем фоновые задачи

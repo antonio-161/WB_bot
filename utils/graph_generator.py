@@ -1,12 +1,13 @@
 """Генератор графиков изменения цен."""
 import io
-from datetime import datetime
 from typing import List
 import matplotlib
 matplotlib.use('Agg')  # Без GUI
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+
 from models import PriceHistoryRow
+from utils.wb_utils import apply_wallet_discount
 
 # Настройка для корректного отображения русского текста
 plt.rcParams['font.family'] = 'DejaVu Sans'
@@ -36,15 +37,10 @@ async def generate_price_graph(
     # Извлекаем данные
     dates = [h.recorded_at for h in history]
 
-    # Применяем скидку если есть
-    if discount > 0:
-        from utils.wb_utils import apply_wallet_discount
-        prices = [apply_wallet_discount(h.product_price, discount) for h in history]
-    else:
-        prices = [h.product_price for h in history]
-        
-        # Создаем график
-        fig, ax = plt.subplots(figsize=(12, 6))
+    # Создаем график
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    prices = [apply_wallet_discount(h.product_price, discount) for h in history]
     
     # Рисуем линию цены
     ax.plot(dates, prices, marker='o', linewidth=2, markersize=4, color='#2196F3')

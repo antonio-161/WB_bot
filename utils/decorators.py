@@ -3,6 +3,7 @@ import asyncio
 import logging
 from typing import List
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 
 logger = logging.getLogger(__name__)
 
@@ -70,29 +71,38 @@ def require_plan(allowed_plans: List[str], error_message: str = None):
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(query: CallbackQuery, *args, **kwargs):
-            # Получаем db из kwargs или args
-            db = kwargs.get('db') or next((arg for arg in args if hasattr(arg, 'get_user')), None)
-            
+            db = None
+            data = kwargs.get("data")
+
+            if data and "db" in data:
+                db = data["db"]
+            elif "db" in kwargs:
+                db = kwargs["db"]
+            else:
+                # fallback: из FSMContext
+                state: FSMContext = kwargs.get("state") or next((a for a in args if isinstance(a, FSMContext)), None)
+                if state:
+                    try:
+                        data = await state.get_data()
+                        db = data.get("db")
+                    except Exception:
+                        pass
+
             if not db:
                 raise ValueError("DB instance not found in handler arguments")
-            
-            # Проверяем тариф пользователя
+
+            # Проверка тарифа
             user = await db.get_user(query.from_user.id)
             user_plan = user.get("plan", "plan_free") if user else "plan_free"
-            
+
             if user_plan not in allowed_plans:
                 default_msg = (
                     f"⛔ Эта функция доступна только на тарифах: "
                     f"{', '.join([p.replace('plan_', '').title() for p in allowed_plans])}"
                 )
-                await query.answer(
-                    error_message or default_msg,
-                    show_alert=True
-                )
+                await query.answer(error_message or default_msg, show_alert=True)
                 return
-            
-            # Тариф подходит - выполняем функцию
+
             return await func(query, *args, **kwargs)
-        
         return wrapper
     return decorator

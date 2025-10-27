@@ -1,30 +1,45 @@
+"""
+Обработчики для работы с товарами.
+Только получение данных, вызов сервисов, отправка ответа.
+"""
+from typing import Dict, Any
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
+
 from states.user_states import AddProductState, RenameProductState, SetNotifyState
-from services.db import DB
-from services.price_fetcher import PriceFetcher
-from utils.wb_utils import extract_nm_id, apply_wallet_discount
-from keyboards.kb import (
-    products_inline, main_inline_kb, sizes_inline_kb,
-    product_detail_kb, confirm_remove_kb, back_to_product_kb, notify_mode_kb,
-    export_format_kb, onboarding_kb, upsell_kb, products_list_kb,
-    remove_products_kb
+from services.container import Container
+from services.user_service import UserService
+from services.product_service import ProductService
+from services.settings_service import SettingsService
+from utils.wb_utils import extract_nm_id
+from utils.formatters import (
+    format_product_added_message,
+    format_product_with_size_added,
+    format_products_list,
+    format_product_detail,
+    format_filtered_products
 )
-from utils.decorators import require_plan
 from utils.graph_generator import generate_price_graph
+from utils.decorators import require_plan
+from keyboards.kb import (
+    main_inline_kb, sizes_inline_kb, onboarding_kb,
+    products_list_kb, product_detail_kb, confirm_remove_kb,
+    back_to_product_kb, notify_mode_kb, remove_products_kb
+)
+from models import PriceHistoryRow
 import logging
-from utils.export_utils import generate_excel, generate_csv
-from datetime import datetime
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 
-# ---------------- Добавление товара ----------------
+# ============= ДОБАВЛЕНИЕ ТОВАРА =============
+
 @router.callback_query(F.data == "add_product")
-async def cb_add_product(query: CallbackQuery, state: FSMContext):
-    """Запрос ссылки или артикула для отслеживания товара."""
+async def cb_add_url_or_article(query: CallbackQuery, state: FSMContext):
+    """Запрос ссылки/артикула."""
     await query.message.answer(
         "📎 <b>Добавление товара</b>\n\n"
         "Отправьте:\n"
@@ -38,28 +53,31 @@ async def cb_add_product(query: CallbackQuery, state: FSMContext):
 
 
 @router.message(AddProductState.waiting_for_url)
-async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: PriceFetcher):
-    url_or_nm = message.text.strip()
-    nm = extract_nm_id(url_or_nm)
+async def add_product(
+    message: Message,
+    state: FSMContext,
+    user_service: UserService,
+    product_service: ProductService,
+    settings_service: SettingsService
+):
+    """Обработка ввода ссылки/артикула."""
+    # Извлекаем данные
+    nm = extract_nm_id(message.text.strip())
+    user_id = message.from_user.id
 
     if not nm:
         await message.answer(
             "❌ Не удалось распознать артикул.\n\n"
-            "Отправьте:\n"
-            "• Ссылку на товар WB\n"
-            "• Артикул (6-12 цифр)"
+            "Отправьте:\n• Ссылку на товар WB\n• Артикул (6-12 цифр)"
         )
         return
 
-    await db.ensure_user(message.from_user.id)
-    user = await db.get_user(message.from_user.id)
-    prods = await db.list_products(message.from_user.id)
-    max_links = user.get("max_links", 5)
-
-    if len(prods) >= max_links:
+    # Проверка лимитов через сервис
+    can_add, reason = await user_service.can_add_product(user_id)
+    
+    if not can_add:
         await message.answer(
-            f"⛔ Достигнут лимит ({max_links}) товаров.\n"
-            "Удалите старый товар или обновите тариф.",
+            f"⛔ {reason}\nУдалите старый товар или обновите тариф.",
             reply_markup=main_inline_kb()
         )
         await state.clear()
@@ -68,36 +86,46 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
     status_msg = await message.answer("⏳ Получаю информацию о товаре...")
 
     try:
-        product_data = await price_fetcher.get_product_data(nm)
-        if not product_data:
+        # Получаем настройки
+        settings = await settings_service.get_user_settings(user_id)
+        dest = settings.get("dest")
+        discount = settings.get("discount", 0)
+        
+        # Формируем URL
+        url = f"https://www.wildberries.ru/catalog/{nm}/detail.aspx"
+        
+        # Добавляем товар через сервис
+        success, msg, product_id, product_data = await product_service.add_product(
+            user_id, nm, url, dest
+        )
+        
+        if not success:
             await status_msg.edit_text(
-                "❌ Не удалось получить данные о товаре.\n"
-                "Проверьте артикул и попробуйте позже."
+                f"⚠️ {msg}",
+                reply_markup=main_inline_kb()
             )
             await state.clear()
             return
-
-        product_name = product_data.get("name", f"Товар {nm}")
+        
+        # Проверяем размеры
         sizes = product_data.get("sizes", [])
+        valid_sizes = [
+            s for s in sizes 
+            if s.get("name") not in ("", "0", None)
+            and s.get("origName") not in ("", "0", None)
+        ]
 
-        # Формируем URL товара
-        url = f"https://www.wildberries.ru/catalog/{nm}/detail.aspx"
-
-        # Проверяем, есть ли реальные размеры (не пустые name и origName)
-        valid_sizes = []
-        if sizes:
-            valid_sizes = [
-                s for s in sizes 
-                if s.get("name") not in ("", "0", None)
-                and s.get("origName") not in ("", "0", None)
-            ]
-
-        # Если есть реальные размеры — переходим в выбор размера
+        # Если есть размеры — предлагаем выбрать
         if valid_sizes:
-            await state.update_data(url=url, nm=nm, product_name=product_name)
+            await state.update_data(
+                url=url,
+                nm=nm,
+                product_id=product_id,
+                product_name=product_data.get("name", f"Товар {nm}")
+            )
 
             await status_msg.edit_text(
-                f"📦 <b>{product_name}</b>\n"
+                f"📦 <b>{product_data.get('name')}</b>\n"
                 f"🔢 Артикул: <code>{nm}</code>\n\n"
                 "Выберите размер для отслеживания:",
                 reply_markup=sizes_inline_kb(nm, valid_sizes),
@@ -105,138 +133,87 @@ async def add_url(message: Message, state: FSMContext, db: DB, price_fetcher: Pr
             )
             await state.set_state(AddProductState.waiting_for_size)
         else:
-            # Товар без размеров — добавляем сразу
-            product_id = await db.add_product(message.from_user.id, url, nm, product_name)
-            if not product_id:
-                await status_msg.edit_text(
-                    "⚠️ Этот товар уже в отслеживании.",
-                    reply_markup=main_inline_kb()
-                )
-                await state.clear()
-                return
-
-            # Сохраняем цены и добавляем в историю
-            # Для товаров без размеров цена находится в первом элементе sizes
+            # Товар без размеров
             size_data = sizes[0] if sizes else {}
             price_info = size_data.get("price", {})
-            price_basic = price_info.get("basic", 0)
-            price_product = price_info.get("product", 0)
-            qty = sum(stock.get("qty", 0) for stock in size_data.get("stocks", []))
-
-            await db.update_prices_and_stock(
-                product_id=product_id,
-                basic=price_basic,
-                product=price_product,
-                last_qty=qty,
-                out_of_stock=(qty == 0)
-            )
-
-            # Добавляем первую запись в историю
-            await db.add_price_history(product_id, price_basic, price_product, qty)
-
-            # Получаем скидку пользователя для отображения
-            user = await db.get_user(message.from_user.id)
-            discount = user.get("discount_percent", 0) if user else 0
-
-            display_price = int(price_product)
-            price_text = f"💰 Текущая цена: {display_price} ₽"
-
-            if discount > 0:
-                final_price = apply_wallet_discount(display_price, discount)
-                price_text = f"💰 Цена: {display_price} ₽\n💳 С кошельком ({discount}%): {int(final_price)} ₽"
-
-            # Проверяем, это онбординг или обычное добавление
+            product_price = price_info.get("product", 0)
+            
+            # Проверяем онбординг
             data = await state.get_data()
             is_onboarding = data.get("onboarding", False)
 
-            if is_onboarding:
-                # Онбординг: показываем ценность + предлагаем тариф
-                await status_msg.edit_text(
-                    f"🎉 <b>Отлично! Товар добавлен</b>\n\n"
-                    f"📦 {product_name}\n"
-                    f"🔢 Артикул: <code>{nm}</code>\n"
-                    f"{price_text}\n\n"
-                    "✅ Теперь я буду отслеживать цену каждый день\n"
-                    "🔔 Вы получите уведомление при снижении\n\n"
-                    "💡 <b>Что дальше?</b>\n"
-                    "🎁 У вас ещё <b>4 бесплатных слота</b>\n"
-                    "Добавьте больше товаров или выберите тариф для расширения возможностей 👇",
-                    reply_markup=onboarding_kb(),
-                    parse_mode="HTML"
-                )
-            else:
-                # Обычное добавление
-                await status_msg.edit_text(
-                    f"✅ <b>Товар добавлен!</b>\n\n"
-                    f"📦 {product_name}\n"
-                    f"🔢 Артикул: <code>{nm}</code>\n"
-                    f"{price_text}\n\n"
-                    "Я буду отслеживать изменения цены.",
-                    reply_markup=main_inline_kb(),
-                    parse_mode="HTML"
-                )
+            # Форматируем и отправляем
+            formatted_msg = format_product_added_message(
+                product_data.get("name", f"Товар {nm}"),
+                nm,
+                product_price,
+                discount,
+                is_onboarding
+            )
+
+            await status_msg.edit_text(
+                formatted_msg,
+                reply_markup=onboarding_kb() if is_onboarding else main_inline_kb(),
+                parse_mode="HTML"
+            )
 
             await state.clear()
 
     except Exception as e:
         logger.exception(f"Ошибка при добавлении товара {nm}: {e}")
-        await status_msg.edit_text("❌ Произошла ошибка при добавлении товара. Попробуйте позже.")
+        await status_msg.edit_text(
+            "❌ Произошла ошибка при добавлении товара. Попробуйте позже."
+        )
         await state.clear()
 
 
 @router.callback_query(F.data.startswith("select_size:"), AddProductState.waiting_for_size)
-async def select_size_cb(query: CallbackQuery, state: FSMContext, db: DB, price_fetcher: PriceFetcher):
-    """Пользователь выбрал размер для товара."""
+async def select_size_cb(
+    query: CallbackQuery,
+    state: FSMContext,
+    product_service: ProductService,
+    settings_service: SettingsService
+):
+    """Выбор размера товара."""
+    # Извлекаем данные
+    _, nm_str, size_name = query.data.split(":", 2)
+    nm = int(nm_str)
+    user_id = query.from_user.id
+
+    data = await state.get_data()
+    product_id = data.get("product_id")
+    product_name = data.get("product_name")
+
+    if not product_id or not product_name:
+        await query.answer(
+            "❌ Произошла ошибка, попробуйте добавить товар заново.",
+            show_alert=True
+        )
+        await state.clear()
+        return
+
     try:
-        _, nm_str, size_name = query.data.split(":", 2)
-        nm = int(nm_str)
-        user_id = query.from_user.id
-
-        data = await state.get_data()
-        url = data.get("url")
-        product_name = data.get("product_name")
-
-        if not url or not product_name:
-            await query.answer("❌ Произошла ошибка, попробуйте добавить товар заново.", show_alert=True)
+        # Обновляем размер через сервис
+        settings = await settings_service.get_user_settings(user_id)
+        dest = settings.get("dest")
+        
+        success, msg = await product_service.update_product_size(
+            product_id,
+            size_name,
+            nm,
+            dest
+        )
+        
+        if not success:
+            await query.answer(f"❌ {msg}", show_alert=True)
             await state.clear()
             return
 
-        # Добавляем товар с выбранным размером
-        product_id = await db.add_product(user_id, url, nm, product_name)
-        if not product_id:
-            await query.answer("⚠️ Этот товар уже в отслеживании.", show_alert=True)
-            await state.clear()
-            return
-
-        await db.set_selected_size(product_id, size_name)
-
-        # Сохраняем текущие цены
-        product_data = await price_fetcher.get_product_data(nm)
-        if product_data and product_data.get("sizes"):
-            size_data = next((s for s in product_data["sizes"] if s["name"] == size_name), None)
-            if size_data:
-                price_info = size_data.get("price", {})
-                price_basic = price_info.get("basic", 0)
-                price_product = price_info.get("product", 0)
-                qty = sum(stock.get("qty", 0) for stock in size_data.get("stocks", []))
-                
-                await db.update_prices_and_stock(
-                    product_id=product_id,
-                    basic=price_basic,
-                    product=price_product,
-                    last_qty=qty,
-                    out_of_stock=(qty == 0)
-                )
-                
-                # Добавляем в историю
-                await db.add_price_history(product_id, price_basic, price_product, qty)
+        # Форматируем и отправляем
+        formatted_msg = format_product_with_size_added(product_name, nm, size_name)
 
         await query.message.edit_text(
-            f"✅ <b>Товар добавлен!</b>\n\n"
-            f"📦 {product_name}\n"
-            f"🔢 Артикул: <code>{nm}</code>\n"
-            f"🔘 Размер: <b>{size_name}</b>\n\n"
-            "Теперь я буду отслеживать цены для этого размера.",
+            formatted_msg,
             parse_mode="HTML",
             reply_markup=main_inline_kb()
         )
@@ -249,295 +226,138 @@ async def select_size_cb(query: CallbackQuery, state: FSMContext, db: DB, price_
         await state.clear()
 
 
-# ---------------- Список товаров ----------------
+# ============= СПИСОК ТОВАРОВ =============
+
 @router.callback_query(F.data == "list_products")
-async def cb_list_products(query: CallbackQuery, db: DB):
-    """Улучшенный список отслеживаемых товаров с аналитикой."""
+async def cb_list_products(
+    query: CallbackQuery,
+    user_service: UserService,
+    product_service: ProductService,
+    settings_service: SettingsService
+):
+    """Показать список товаров с аналитикой."""
+    user_id = query.from_user.id
     
-    products = await db.list_products(query.from_user.id)
+    # Получаем данные через сервисы
+    products_analytics = await product_service.get_products_with_analytics(user_id)
     
-    if not products:
+    if not products_analytics:
         await query.message.edit_text(
             "📭 <b>Список пуст</b>\n\n"
             "Вы ещё не добавили товары для отслеживания.\n\n"
             "💡 Добавьте первый товар, чтобы начать экономить!",
             parse_mode="HTML",
-            reply_markup=products_inline()
+            reply_markup=products_list_kb([], False, False, False)
         )
         await query.answer()
         return
     
-    # Получаем данные пользователя
-    user = await db.get_user(query.from_user.id)
-    discount = user.get("discount_percent", 0) if user else 0
+    user = await user_service.get_user_info(user_id)
+    settings = await settings_service.get_user_settings(user_id)
+    
+    discount = settings.get("discount", 0)
     plan = user.get("plan", "plan_free")
     max_links = user.get("max_links", 5)
     
-    # ===== АНАЛИТИКА ТОВАРОВ =====
-    products_with_analytics = []
-    total_current_price = 0
-    total_potential_savings = 0
-    best_deal = None
-    best_deal_percent = 0
-    
-    for p in products:
-        # Получаем историю для анализа
-        history = await db.get_price_history(p.id, limit=30)
-        
-        analytics = {
-            "product": p,
-            "trend": "neutral",  # up, down, neutral
-            "savings_percent": 0,
-            "savings_amount": 0,
-            "has_history": len(history) >= 2
-        }
-        
-        if len(history) >= 2:
-            prices = [h.product_price for h in history]
-            max_price = max(prices)
-            min_price = min(prices)
-            current_price = p.last_product_price or max_price
-            
-            # Расчёт экономии
-            savings = max_price - current_price
-            if savings > 0 and max_price > 0:
-                savings_percent = (savings / max_price) * 100
-                analytics["savings_percent"] = savings_percent
-                analytics["savings_amount"] = savings
-                
-                # Лучшая сделка
-                if savings_percent > best_deal_percent:
-                    best_deal_percent = savings_percent
-                    best_deal = p
-            
-            # Тренд (последние 3 записи)
-            recent_prices = [h.product_price for h in history[:3]]
-            if len(recent_prices) >= 2:
-                if recent_prices[0] < recent_prices[-1]:
-                    analytics["trend"] = "down"  # Цена падает
-                elif recent_prices[0] > recent_prices[-1]:
-                    analytics["trend"] = "up"    # Цена растёт
-            
-            total_potential_savings += savings
-        
-        if p.last_product_price:
-            total_current_price += p.last_product_price
-        
-        products_with_analytics.append(analytics)
-    
-    # ===== СОРТИРОВКА ПО ВЫГОДНОСТИ =====
-    products_with_analytics.sort(
-        key=lambda x: x["savings_percent"], 
-        reverse=True
+    # Подсчёт аналитики
+    total_current_price = sum(
+        p["product"].get("last_product_price", 0)
+        for p in products_analytics
     )
     
-    # ===== ФОРМИРУЕМ СООБЩЕНИЕ =====
+    total_potential_savings = sum(
+        p["savings_amount"]
+        for p in products_analytics
+    )
     
-    # Заголовок с общей статистикой
-    text = "📦 <b>Ваши товары</b>\n"
-    text += f"{'═'*25}\n\n"
+    best_deal = None
+    best_deal_percent = 0
+    for item in products_analytics:
+        if item["savings_percent"] > best_deal_percent:
+            best_deal_percent = item["savings_percent"]
+            best_deal = item["product"]
     
-    # Мини-дашборд
-    text += f"📊 Товаров: <b>{len(products)}/{max_links}</b>\n"
-    
-    if discount > 0:
-        total_with_discount = sum(
-            apply_wallet_discount(p.last_product_price or 0, discount) 
-            for p in products
-        )
-        text += f"💰 Общая стоимость: <b>{total_with_discount}₽</b> (с WB кошельком)\n"
-    else:
-        text += f"💰 Общая стоимость: <b>{total_current_price}₽</b>\n"
-    
-    if total_potential_savings > 0:
-        text += f"💎 Можно сэкономить: <b>{total_potential_savings}₽</b>\n"
-    
-    text += "\n"
-    
-    # Лучшая сделка (если есть)
-    if best_deal:
-        text += (
-            f"🔥 <b>Лучшая сделка сейчас:</b>\n"
-            f"{best_deal.display_name[:35]}...\n"
-            f"└ Скидка {best_deal_percent:.0f}% от пика цены!\n\n"
-        )
-    
-    # Сортировка и фильтры
-    text += "📋 <b>Список товаров:</b>\n"
-    text += "<i>Отсортировано по выгодности</i>\n\n"
-    
-    # ===== СПИСОК ТОВАРОВ =====
-    products_data = []
-    
-    for i, item in enumerate(products_with_analytics[:10], 1):  # Показываем топ-10
-        p = item["product"]
-        
-        # Эмодзи статуса
-        if item["savings_percent"] >= 30:
-            status_emoji = "🔥"
-        elif item["savings_percent"] >= 15:
-            status_emoji = "💰"
-        elif item["trend"] == "down":
-            status_emoji = "📉"
-        elif item["trend"] == "up":
-            status_emoji = "📈"
-        else:
-            status_emoji = "📦"
-        
-        # Наличие
-        stock_emoji = "✅" if not p.out_of_stock else "❌"
-        
-        # Название
-        display_name = p.display_name[:30]
-        if len(p.display_name) > 30:
-            display_name += "..."
-        
-        # Цена
-        if p.last_product_price:
-            if discount > 0:
-                final_price = apply_wallet_discount(p.last_product_price, discount)
-                price_str = f"{final_price}₽"
-            else:
-                price_str = f"{p.last_product_price}₽"
-        else:
-            price_str = "—"
-        
-        # Экономия
-        if item["savings_percent"] > 0:
-            savings_str = f" (-{item['savings_percent']:.0f}%)"
-        else:
-            savings_str = ""
-        
-        text += f"{status_emoji} <b>{i}.</b> {display_name}\n"
-        text += f"   {stock_emoji} {price_str}{savings_str}\n"
-        
-        products_data.append({
-            "nm_id": p.nm_id,
-            "name": display_name
-        })
-    
-    # Если товаров больше 10
-    if len(products_with_analytics) > 10:
-        text += f"\n<i>... и ещё {len(products_with_analytics) - 10} товаров</i>\n"
-    
-    # ===== ПОДСКАЗКИ И МОТИВАЦИЯ =====
-    text += "\n💡 <b>Подсказки:</b>\n"
-    
-    # Подсказка о наличии
-    out_of_stock_count = sum(1 for p in products if p.out_of_stock)
-    if out_of_stock_count > 0:
-        text += f"• {out_of_stock_count} товар(ов) нет в наличии\n"
-    
-    # Подсказка о лимите
-    if plan == "plan_free" and len(products) >= max_links - 1:
-        text += f"• Осталось {max_links - len(products)} слот(ов)\n"
-    
-    # Подсказка об апгрейде
-    if plan == "plan_free" and len(products) >= 3:
-        text += "• 💎 Улучшите тариф для отслеживания до 50 товаров\n"
-    
-    # ===== КНОПКИ ДЕЙСТВИЙ =====
-    keyboard_rows = []
-    
-    # Фильтры (для платных тарифов)
-    if plan in ["plan_basic", "plan_pro"]:
-        keyboard_rows.append([
-            InlineKeyboardButton(
-                text="🔥 Лучшие скидки",
-                callback_data="filter_best_deals"
-            ),
-            InlineKeyboardButton(
-                text="📉 Падающие цены",
-                callback_data="filter_price_drops"
-            )
-        ])
+    # Форматируем сообщение
+    formatted_msg = format_products_list(
+        products_analytics,
+        total_current_price,
+        total_potential_savings,
+        best_deal,
+        best_deal_percent,
+        discount,
+        plan,
+        max_links
+    )
     
     # Формируем данные для клавиатуры
     products_data = [
-        {'nm_id': p.nm_id, 'display_name': p.display_name}
-        for p in products
+        {
+            "nm_id": item["product"]["nm_id"],
+            "display_name": (
+                item["product"].get("custom_name") or 
+                item["product"].get("name_product", "")
+            )
+        }
+        for item in products_analytics
     ]
-
+    
+    # Отправляем ответ
     await query.message.edit_text(
-        text,
+        formatted_msg,
         parse_mode="HTML",
         reply_markup=products_list_kb(
             products=products_data,
             has_filters=(plan in ["plan_basic", "plan_pro"]),
             show_export=(plan == "plan_pro"),
-            show_upgrade=(plan == "plan_free" and len(products) >= 3)
+            show_upgrade=(plan == "plan_free" and len(products_analytics) >= 3)
         )
     )
+    await query.answer()
 
 
-# ===== ФИЛЬТРЫ =====
+# ============= ФИЛЬТРЫ =============
 
 @router.callback_query(F.data == "filter_best_deals")
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Фильтры доступны только на платных тарифах")
-async def filter_best_deals(query: CallbackQuery, db: DB):
-    """Показать только товары с лучшими скидками."""
+async def filter_best_deals(
+    query: CallbackQuery,
+    product_service: ProductService,
+    settings_service: SettingsService
+):
+    """Показать товары с лучшими скидками."""
+    user_id = query.from_user.id
     
-    products = await db.list_products(query.from_user.id)
-    user = await db.get_user(query.from_user.id)
-    discount = user.get("discount_percent", 0) if user else 0
-    
-    # Фильтруем товары со скидкой >= 15%
-    filtered = []
-    for p in products:
-        history = await db.get_price_history(p.id, limit=30)
-        if len(history) >= 2:
-            prices = [h.product_price for h in history]
-            max_price = max(prices)
-            current = p.last_product_price or max_price
-            
-            if max_price > 0:
-                savings_percent = ((max_price - current) / max_price) * 100
-                if savings_percent >= 15:
-                    filtered.append((p, savings_percent))
+    # Получаем отфильтрованные товары через сервис
+    filtered = await product_service.filter_best_deals(user_id, min_savings_percent=15.0)
     
     if not filtered:
         await query.answer(
-            "😔 Сейчас нет товаров со значительными скидками.\n"
-            "Продолжайте мониторинг!",
+            "😔 Сейчас нет товаров со значительными скидками.\nПродолжайте мониторинг!",
             show_alert=True
         )
         return
     
-    # Сортируем по скидке
-    filtered.sort(key=lambda x: x[1], reverse=True)
+    settings = await settings_service.get_user_settings(user_id)
+    discount = settings.get("discount", 0)
     
-    text = (
-        "🔥 <b>Лучшие скидки сейчас</b>\n"
-        f"{'═'*25}\n\n"
-        f"Найдено товаров: <b>{len(filtered)}</b>\n\n"
+    # Форматируем сообщение
+    formatted_msg = format_filtered_products(
+        "🔥 <b>Лучшие скидки сейчас</b>",
+        filtered,
+        discount,
+        show_percent=True
     )
+    formatted_msg += "\n💡 Отличное время для покупки!"
     
-    products_data = []
-    for i, (p, savings_percent) in enumerate(filtered[:15], 1):
-        display_name = p.display_name[:35]
-        if len(p.display_name) > 35:
-            display_name += "..."
-        
-        if p.last_product_price:
-            if discount > 0:
-                final_price = apply_wallet_discount(p.last_product_price, discount)
-                price_str = f"{final_price}₽"
-            else:
-                price_str = f"{p.last_product_price}₽"
-        else:
-            price_str = "—"
-        
-        text += (
-            f"🔥 <b>{i}.</b> {display_name}\n"
-            f"   💰 {price_str} <b>(-{savings_percent:.0f}%)</b>\n"
-        )
-        
-        products_data.append({"nm_id": p.nm_id, "name": display_name})
+    # Формируем данные для клавиатуры
+    products_data = [
+        {"nm_id": p[0]["nm_id"], "name": p[0].get("custom_name") or p[0].get("name_product", "")}
+        for p in filtered
+    ]
     
-    text += "\n💡 Отличное время для покупки!"
-    
+    from keyboards.kb import products_inline
     await query.message.edit_text(
-        text,
+        formatted_msg,
         parse_mode="HTML",
         reply_markup=products_inline(products_data)
     )
@@ -546,216 +366,129 @@ async def filter_best_deals(query: CallbackQuery, db: DB):
 
 @router.callback_query(F.data == "filter_price_drops")
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Фильтры доступны только на платных тарифах")
-async def filter_price_drops(query: CallbackQuery, db: DB):
+async def filter_price_drops(
+    query: CallbackQuery,
+    product_service: ProductService
+):
     """Показать товары с падающими ценами."""
+    user_id = query.from_user.id
     
-    products = await db.list_products(query.from_user.id)
-    
-    # Фильтруем товары с падающим трендом
-    filtered = []
-    for p in products:
-        history = await db.get_price_history(p.id, limit=7)
-        if len(history) >= 3:
-            prices = [h.product_price for h in history]
-            # Проверяем тренд
-            if prices[0] < prices[-1]:  # Последняя цена ниже первой
-                drop = prices[-1] - prices[0]
-                filtered.append((p, drop))
+    # Получаем товары через сервис
+    filtered = await product_service.filter_price_drops(user_id)
     
     if not filtered:
         await query.answer(
-            "📈 Сейчас цены стабильны или растут.\n"
-            "Следим дальше!",
+            "📈 Сейчас цены стабильны или растут.\nСледим дальше!",
             show_alert=True
         )
         return
     
-    # Сортируем по величине падения
-    filtered.sort(key=lambda x: x[1], reverse=True)
-    
-    text = (
-        "📉 <b>Цены падают</b>\n"
-        f"{'═'*25}\n\n"
-        f"Найдено товаров: <b>{len(filtered)}</b>\n\n"
+    # Форматируем сообщение
+    formatted_msg = format_filtered_products(
+        "📉 <b>Цены падают</b>",
+        filtered,
+        discount=0,
+        show_percent=False
     )
+    formatted_msg += "\n💡 Возможно, стоит подождать ещё!"
     
-    products_data = []
-    for i, (p, drop) in enumerate(filtered[:15], 1):
-        display_name = p.display_name[:35]
-        if len(p.display_name) > 35:
-            display_name += "..."
-        
-        text += (
-            f"📉 <b>{i}.</b> {display_name}\n"
-            f"   ↓ Падение: <b>{drop}₽</b> за неделю\n"
-        )
-        
-        products_data.append({"nm_id": p.nm_id, "name": display_name})
+    # Формируем данные для клавиатуры
+    products_data = [
+        {"nm_id": p[0]["nm_id"], "name": p[0].get("custom_name") or p[0].get("name_product", "")}
+        for p in filtered
+    ]
     
-    text += "\n💡 Возможно, стоит подождать ещё!"
-    
+    from keyboards.kb import products_inline
     await query.message.edit_text(
-        text,
+        formatted_msg,
         parse_mode="HTML",
         reply_markup=products_inline(products_data)
     )
     await query.answer()
 
 
-@router.callback_query(F.data == "show_detailed_list")
-async def show_detailed_list(query: CallbackQuery, db: DB):
-    """Показать все товары с кнопками для детального просмотра."""
-    
-    products = await db.list_products(query.from_user.id)
-    
-    products_data = []
-    for p in products:
-        products_data.append({
-            "nm_id": p.nm_id,
-            "name": p.display_name
-        })
-    
-    text = (
-        "📋 <b>Все товары</b>\n"
-        f"{'═'*25}\n\n"
-        "Нажмите на товар, чтобы увидеть детальную информацию:"
-    )
-    
-    await query.message.edit_text(
-        text,
-        parse_mode="HTML",
-        reply_markup=products_inline(products_data)
-    )
-    await query.answer()
+# ============= ДЕТАЛЬНАЯ ИНФОРМАЦИЯ =============
 
-
-@router.callback_query(F.data == "upsell_from_products_list")
-async def upsell_from_products_list(query: CallbackQuery, db: DB):
-    """Upsell с контекстом списка товаров."""
-    
-    user = await db.get_user(query.from_user.id)
-    products = await db.list_products(query.from_user.id)
-    
-    additional_slots = 50 - len(products)
-    
-    await query.message.edit_text(
-        f"🚀 <b>Расширьте возможности!</b>\n\n"
-        f"📦 Сейчас: <b>{len(products)}/5</b> товаров\n\n"
-        "😔 <b>Что вы упускаете:</b>\n"
-        "❌ Не можете добавить больше товаров\n"
-        "❌ История только за месяц\n"
-        "❌ Базовые уведомления\n\n"
-        f"✅ <b>С тарифом Базовый:</b>\n"
-        f"• Ещё <b>+{additional_slots} слотов</b>\n"
-        "• История за 3 месяца\n"
-        "• Умные уведомления\n"
-        "• Ваш ПВЗ\n\n"
-        "💰 Всего 199₽/мес — окупается с 1 покупки!",
-        parse_mode="HTML",
-        reply_markup=upsell_kb()
-    )
-    await query.answer()
-
-
-# ---------------- Детальная информация о товаре ----------------
-@router.callback_query(F.data == "product_detail")
-async def cb_product_detail(query: CallbackQuery, db: DB):
-    """Показать детальную информацию о товаре."""
+@router.callback_query(F.data.startswith("product_detail:"))
+async def cb_product_detail(
+    query: CallbackQuery,
+    product_service: ProductService,
+    settings_service: SettingsService,
+    user_service: UserService,
+    container: Container,
+):
+    """Показать детали товара."""
+    # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
     
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
-    if not product:
+    # Получаем товар через сервис
+    product_repo = container.get_product_repo()
+    product_dict = await product_repo.get_by_nm_id(user_id, nm_id)
+    
+    if not product_dict:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
     
-    # Получаем скидку пользователя
-    user = await db.get_user(query.from_user.id)
-    discount = user.get("discount_percent", 0) if user else 0
+    # Получаем детали через сервис
+    settings = await settings_service.get_user_settings(user_id)
+    user = await user_service.get_user_info(user_id)
     
-    # Получаем историю для статистики
-    history = await db.get_price_history(product.id, limit=100)
+    discount = settings.get("discount", 0)
+    plan = user.get("plan", "plan_free")
     
-    text = f"📦 <b>{product.display_name}</b>\n\n"
-    text += f"🔢 Артикул: <code>{nm_id}</code>\n"
+    detail = await product_service.get_product_detail(product_dict["id"], discount)
     
-    if product.selected_size:
-        text += f"🔘 Размер: <b>{product.selected_size}</b>\n"
+    if not detail:
+        await query.answer("❌ Ошибка получения данных", show_alert=True)
+        return
     
-    if product.last_product_price:
-        price = product.last_product_price
-        if discount > 0:
-            final_price = apply_wallet_discount(price, discount)
-            text += f"💰 Цена: {price} ₽\n"
-            text += f"💳 С кошельком ({discount}%): <b>{final_price} ₽</b>\n"
-        else:
-            text += f"💰 Текущая цена: <b>{price} ₽</b>\n"
-
-    # Проверяем тариф для отображения остатков
-    if product.last_qty is not None:
-        if user and user.get("plan") == "plan_pro":
-            # Только для продвинутого тарифа показываем количество
-            if product.out_of_stock:
-                text += "📦 Остаток: <b>Нет в наличии</b>\n"
-            else:
-                text += f"📦 Остаток: <b>{product.last_qty} шт.</b>\n"
-        else:
-            # Для остальных тарифов — только наличие/отсутствие
-            if product.out_of_stock:
-                text += f"📦 <b>Нет в наличии</b>\n"
-            else:
-                text += f"📦 <b>В наличии</b>\n"
-
-    # Статистика из истории
-    if history:
-        prices = [h.product_price for h in history]
-        min_price = min(prices)
-        max_price = max(prices)
-        text += f"\n📊 <b>Статистика:</b>\n"
-
-        if discount > 0:
-            min_with_discount = apply_wallet_discount(min_price, discount)
-            max_with_discount = apply_wallet_discount(max_price, discount)
-            text += f"• Мин. цена: {min_price} ₽ (с WB кошельком {min_with_discount} ₽)\n"
-            text += f"• Макс. цена: {max_price} ₽ (с WB кошельком {max_with_discount} ₽)\n"
-        else:
-            text += f"• Мин. цена: {min_price} ₽\n"
-            text += f"• Макс. цена: {max_price} ₽\n"
-
-        # Настройки уведомлений
-    if product.notify_mode == "percent":
-        text += f"\n🔔 Уведомления: при снижении на {product.notify_value}%"
-    elif product.notify_mode == "threshold":
-        text += f"\n🔔 Уведомления: при цене ≤ {product.notify_value} ₽"
-    else:
-        text += "\n🔔 Уведомления: все изменения цены"
-
-    text += f"\n🕐 Добавлен: {product.created_at.strftime('%d.%m.%Y %H:%M')}"
+    # Форматируем и отправляем
+    formatted_msg = format_product_detail(
+        detail["product"],
+        detail["stats"],
+        discount,
+        plan
+    )
 
     await query.message.edit_text(
-        text,
+        formatted_msg,
         reply_markup=product_detail_kb(nm_id),
         parse_mode="HTML"
     )
     await query.answer()
 
 
-# ---------------- График цен ----------------
-@router.callback_query(F.data.startswith("show_graph:"))
-async def cb_show_graph(query: CallbackQuery, db: DB):
-    """Показать график изменения цены."""
-    nm_id = int(query.data.split(":", 1)[1])
+# ============= ГРАФИК ЦЕН =============
 
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+@router.callback_query(F.data.startswith("show_graph:"))
+async def cb_show_graph(
+    query: CallbackQuery,
+    product_service: ProductService,
+    settings_service: SettingsService,
+    container: Container
+):
+    """Показать график цен."""
+    # Извлекаем данные
+    nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
+    
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
+    
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
-
-    history = await db.get_price_history(product.id, limit=100)
-
-    if len(history) < 2:
+    
+    # Получаем детали через сервис
+    settings = await settings_service.get_user_settings(user_id)
+    discount = settings.get("discount", 0)
+    
+    detail = await product_service.get_product_detail(product["id"], discount)
+    
+    if not detail or not detail.get("history") or len(detail["history"]) < 2:
         await query.answer(
-            "📊 Недостаточно данных для графика.\n"
-            "Нужно минимум 2 записи цен.",
+            "📊 Недостаточно данных для графика.\nНужно минимум 2 записи цен.",
             show_alert=True
         )
         return
@@ -763,21 +496,24 @@ async def cb_show_graph(query: CallbackQuery, db: DB):
     await query.answer("⏳ Генерирую график...")
 
     try:
-        # Получаем скидку пользователя
-        user = await db.get_user(query.from_user.id)
-        discount = user.get("discount_percent", 0) if user else 0
-
+        # Конвертируем в модель
+        history_rows = [PriceHistoryRow(**h) for h in detail["history"]]
+        display_name = product.get("custom_name") or product.get("name_product", "")
+        
         # Генерируем график
-        graph_buffer = await generate_price_graph(history, product.display_name, discount)
+        graph_buffer = await generate_price_graph(history_rows, display_name, discount)
 
-        # Отправляем как фото
-        photo = BufferedInputFile(graph_buffer.read(), filename=f"price_graph_{nm_id}.png")
+        # Отправляем
+        photo = BufferedInputFile(
+            graph_buffer.read(),
+            filename=f"price_graph_{nm_id}.png"
+        )
 
         caption = (
             f"📈 <b>График цен</b>\n\n"
-            f"📦 {product.display_name}\n"
+            f"📦 {display_name}\n"
             f"🔢 Артикул: <code>{nm_id}</code>\n"
-            f"📊 Записей: {len(history)}"
+            f"📊 Записей: {len(detail['history'])}"
         )
 
         await query.message.answer_photo(
@@ -794,22 +530,27 @@ async def cb_show_graph(query: CallbackQuery, db: DB):
         )
 
 
-# ---------------- Переименование товара ----------------
+# ============= ПЕРЕИМЕНОВАНИЕ =============
+
 @router.callback_query(F.data.startswith("rename:"))
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Переименование доступно только на платных тарифах")
-async def cb_rename_start(query: CallbackQuery, state: FSMContext, db: DB):
-    """Начать переименование товара."""
+async def cb_rename_start(query: CallbackQuery, state: FSMContext, container: Container):
+    """Начать переименование."""
+    # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
     
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
+    
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
     
-    await state.update_data(nm_id=nm_id, product_id=product.id)
+    await state.update_data(nm_id=nm_id, product_id=product["id"])
     await state.set_state(RenameProductState.waiting_for_name)
     
-    current_name = product.display_name
+    current_name = product.get("custom_name") or product.get("name_product", "")
     
     await query.message.answer(
         f"✏️ <b>Переименование товара</b>\n\n"
@@ -821,176 +562,73 @@ async def cb_rename_start(query: CallbackQuery, state: FSMContext, db: DB):
 
 
 @router.message(RenameProductState.waiting_for_name)
-async def process_rename(message: Message, state: FSMContext, db: DB):
-    """Обработка нового названия товара."""
+async def process_rename(
+    message: Message,
+    state: FSMContext,
+    product_service: ProductService
+):
+    """Обработка нового названия."""
     if message.text == "/cancel":
         await message.answer("❌ Переименование отменено", reply_markup=main_inline_kb())
         await state.clear()
         return
     
+    # Извлекаем данные
     new_name = message.text.strip()
-    
-    if len(new_name) < 3:
-        await message.answer("❌ Название слишком короткое (минимум 3 символа)")
-        return
-    
-    if len(new_name) > 200:
-        await message.answer("❌ Название слишком длинное (максимум 200 символов)")
-        return
-    
     data = await state.get_data()
     product_id = data.get("product_id")
     nm_id = data.get("nm_id")
     
-    try:
-        await db.set_custom_name(product_id, new_name)
-        
-        await message.answer(
-            f"✅ <b>Товар переименован!</b>\n\n"
-            f"Новое название:\n<i>{new_name}</i>",
-            parse_mode="HTML",
-            reply_markup=product_detail_kb(nm_id)
-        )
-        
-    except Exception as e:
-        logger.exception(f"Ошибка при переименовании товара {product_id}: {e}")
-        await message.answer(
-            "❌ Ошибка при переименовании товара",
-            reply_markup=main_inline_kb()
-        )
+    # Переименовываем через сервис
+    success, msg = await product_service.rename_product(product_id, new_name)
+    
+    if not success:
+        await message.answer(f"❌ {msg}")
+        return
+    
+    # Отправляем ответ
+    await message.answer(
+        f"✅ <b>{msg}</b>\n\nНовое название:\n<i>{new_name}</i>",
+        parse_mode="HTML",
+        reply_markup=product_detail_kb(nm_id)
+    )
     
     await state.clear()
 
 
-# ---------------- Удаление товара ----------------
-@router.callback_query(F.data == "remove_product")
-async def cb_start_remove(query: CallbackQuery, db: DB):
-    """Начало процесса удаления - показываем список."""
-    products = await db.list_products(query.from_user.id)
-    
-    if not products:
-        await query.answer("📭 Нет товаров для удаления", show_alert=True)
-        return
+# ============= НАСТРОЙКА УВЕДОМЛЕНИЙ =============
 
-    # Формируем список для клавиатуры
-    products_data = [
-        {'nm_id': p.nm_id, 'display_name': p.display_name}
-        for p in products
-    ]
-    
-    text = (
-        "🗑 <b>Выберите товар для удаления:</b>\n\n"
-        f"Всего товаров: {len(products)}"
-    )
-
-    await query.message.edit_text(
-        text,
-        reply_markup=remove_products_kb(products_data),
-        parse_mode="HTML"
-    )
-    await query.answer()
-
-
-@router.callback_query(F.data.startswith("rm:"))
-async def cb_confirm_remove(query: CallbackQuery, db: DB):
-    """Подтверждение удаления товара."""
-    nm_id = int(query.data.split(":", 1)[1])
-    
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
-    if not product:
-        await query.answer("❌ Товар не найден", show_alert=True)
-        return
-    
-    await query.message.edit_text(
-        f"❓ <b>Удалить товар?</b>\n\n"
-        f"📦 {product.display_name}\n"
-        f"🔢 Артикул: <code>{nm_id}</code>\n\n"
-        f"⚠️ История цен также будет удалена.",
-        reply_markup=confirm_remove_kb(nm_id),
-        parse_mode="HTML"
-    )
-    await query.answer()
-
-
-@router.callback_query(F.data.startswith("confirm_remove:"))
-async def cb_remove(query: CallbackQuery, db: DB):
-    """Удаление товара после подтверждения."""
-    nm_id = int(query.data.split(":", 1)[1])
-    ok = await db.remove_product(query.from_user.id, nm_id)
-    
-    if ok:
-        await query.message.edit_text(
-            "✅ Товар успешно удалён из отслеживания.",
-            reply_markup=main_inline_kb()
-        )
-        await query.answer("Товар удалён")
-    else:
-        await query.message.edit_text(
-            "❌ Не удалось удалить товар.\n"
-            "Возможно, он уже был удалён.",
-            reply_markup=main_inline_kb()
-        )
-        await query.answer("Ошибка удаления", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("back_to_product:"))
-async def cb_back_to_product(query: CallbackQuery, db: DB):
-    nm_id = int(query.data.split(":", 1)[1])
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
-
-    if not product:
-        await query.answer("❌ Товар не найден", show_alert=True)
-        return
-
-    await query.message.delete()  # Убираем график
-    await query.message.answer(
-        text=(
-            f"📦 <b>{product.display_name}</b>\n"
-            f"💰 Цена: {int(product.last_product_price or 0)} ₽\n"
-            f"🔢 Артикул: <code>{product.nm_id}</code>"
-        ),
-        parse_mode="HTML",
-        reply_markup=product_detail_kb(product.nm_id)
-    )
-
-    await query.answer()
-
-
-@router.callback_query(F.data == "back_to_menu")
-async def cb_back_to_menu(query: CallbackQuery):
-    """Возврат в главное меню."""
-    await query.message.edit_text(
-        "🏠 <b>Главное меню</b>\n\n"
-        "Выберите действие:",
-        parse_mode="HTML",
-        reply_markup=main_inline_kb()
-    )
-    await query.answer()
-
-
-
-# ---------------- Настройка уведомлений ----------------
 @router.callback_query(F.data.startswith("notify_settings:"))
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Гибкие уведомления доступны с тарифа Базовый")
-async def cb_notify_settings(query: CallbackQuery, db: DB):
-    """Показать меню настройки уведомлений."""
-
+async def cb_notify_settings(query: CallbackQuery, container: Container):
+    """Показать меню уведомлений."""
+    # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
+
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
     
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
     
-    current_settings = "Все изменения цены"
-    if product.notify_mode == "percent":
-        current_settings = f"При снижении на {product.notify_value}%"
-    elif product.notify_mode == "threshold":
-        current_settings = f"При цене ≤ {product.notify_value} ₽"
+    # Формируем текущие настройки
+    notify_mode = product.get("notify_mode")
+    notify_value = product.get("notify_value")
     
+    current_settings = "Все изменения цены"
+    if notify_mode == "percent":
+        current_settings = f"При снижении на {notify_value}%"
+    elif notify_mode == "threshold":
+        current_settings = f"При цене ≤ {notify_value} ₽"
+    
+    display_name = product.get("custom_name") or product.get("name_product", "")
+    
+    # Отправляем
     await query.message.edit_text(
         f"🔔 <b>Настройка уведомлений</b>\n\n"
-        f"📦 {product.display_name}\n\n"
+        f"📦 {display_name}\n\n"
         f"Текущая настройка: <b>{current_settings}</b>\n\n"
         f"Выберите режим уведомлений:",
         parse_mode="HTML",
@@ -1000,16 +638,20 @@ async def cb_notify_settings(query: CallbackQuery, db: DB):
 
 
 @router.callback_query(F.data.startswith("notify_percent:"))
-async def cb_notify_percent(query: CallbackQuery, state: FSMContext, db: DB):
+async def cb_notify_percent(query: CallbackQuery, state: FSMContext, container: Container):
     """Установка процента снижения."""
+    # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
+
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
     
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
     
-    await state.update_data(nm_id=nm_id, product_id=product.id, notify_mode="percent")
+    await state.update_data(nm_id=nm_id, product_id=product["id"], notify_mode="percent")
     await state.set_state(SetNotifyState.waiting_for_value)
     
     await query.message.answer(
@@ -1023,19 +665,23 @@ async def cb_notify_percent(query: CallbackQuery, state: FSMContext, db: DB):
 
 
 @router.callback_query(F.data.startswith("notify_threshold:"))
-async def cb_notify_threshold(query: CallbackQuery, state: FSMContext, db: DB):
+async def cb_notify_threshold(query: CallbackQuery, state: FSMContext, container: Container):
     """Установка целевой цены."""
+    # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
+
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
     
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
     
-    await state.update_data(nm_id=nm_id, product_id=product.id, notify_mode="threshold")
+    await state.update_data(nm_id=nm_id, product_id=product["id"], notify_mode="threshold")
     await state.set_state(SetNotifyState.waiting_for_value)
     
-    current_price = product.last_product_price or 0
+    current_price = product.get("last_product_price", 0)
     
     await query.message.answer(
         f"💰 <b>Установка целевой цены</b>\n\n"
@@ -1049,20 +695,32 @@ async def cb_notify_threshold(query: CallbackQuery, state: FSMContext, db: DB):
 
 
 @router.callback_query(F.data.startswith("notify_all:"))
-async def cb_notify_all(query: CallbackQuery, db: DB):
+async def cb_notify_all(query: CallbackQuery, product_service: ProductService, container: Container):
     """Включить все уведомления."""
+    # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
 
-    product = await db.get_product_by_nm(query.from_user.id, nm_id)
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
+    
     if not product:
         await query.answer("❌ Товар не найден", show_alert=True)
         return
 
-    await db.set_notify_settings(product.id, None, None)
+    # Сбрасываем настройки через сервис
+    success, msg = await product_service.set_notify_settings(product["id"], None, None)
+    
+    if not success:
+        await query.answer(f"❌ {msg}", show_alert=True)
+        return
+    
+    display_name = product.get("custom_name") or product.get("name_product", "")
 
+    # Отправляем ответ
     await query.message.edit_text(
         f"✅ <b>Настройки уведомлений обновлены</b>\n\n"
-        f"📦 {product.display_name}\n\n"
+        f"📦 {display_name}\n\n"
         f"🔔 Теперь вы будете получать уведомления о <b>всех</b> изменениях цены.",
         parse_mode="HTML",
         reply_markup=product_detail_kb(nm_id)
@@ -1071,17 +729,20 @@ async def cb_notify_all(query: CallbackQuery, db: DB):
 
 
 @router.message(SetNotifyState.waiting_for_value)
-async def process_notify_value(message: Message, state: FSMContext, db: DB):
-    """Обработка введённого значения (процент или порог)."""
+async def process_notify_value(
+    message: Message,
+    state: FSMContext,
+    product_service: ProductService
+):
+    """Обработка введённого значения."""
     if message.text == "/cancel":
         await message.answer("❌ Настройка уведомлений отменена", reply_markup=main_inline_kb())
         await state.clear()
         return
 
+    # Извлекаем данные
     try:
         value = int(message.text.strip())
-        if value <= 0:
-            raise ValueError
     except ValueError:
         await message.answer("❌ Введите положительное целое число")
         return
@@ -1091,153 +752,149 @@ async def process_notify_value(message: Message, state: FSMContext, db: DB):
     nm_id = data.get("nm_id")
     notify_mode = data.get("notify_mode")
 
-    # Проверка диапазонов
-    if notify_mode == "percent" and value > 100:
-        await message.answer("❌ Процент не может быть больше 100")
+    # Сохраняем через сервис
+    success, msg = await product_service.set_notify_settings(product_id, notify_mode, value)
+    
+    if not success:
+        await message.answer(f"❌ {msg}")
         return
 
-    try:
-        await db.set_notify_settings(product_id, notify_mode, value)
-
-        if notify_mode == "percent":
-            msg = f"✅ Уведомления настроены!\n\nВы будете получать уведомления при снижении цены на <b>{value}%</b> и более."
-        else:
-            msg = f"✅ Уведомления настроены!\n\nВы будете получать уведомления когда цена станет <b>{value} ₽</b> или ниже."
-
-        await message.answer(
-            msg,
-            parse_mode="HTML",
-            reply_markup=product_detail_kb(nm_id)
+    # Формируем ответ
+    if notify_mode == "percent":
+        result_msg = (
+            f"✅ Уведомления настроены!\n\n"
+            f"Вы будете получать уведомления при снижении цены на <b>{value}%</b> и более."
+        )
+    else:
+        result_msg = (
+            f"✅ Уведомления настроены!\n\n"
+            f"Вы будете получать уведомления когда цена станет <b>{value} ₽</b> или ниже."
         )
 
-    except Exception as e:
-        logger.exception(f"Ошибка при сохранении настроек уведомлений: {e}")
-        await message.answer(
-            "❌ Ошибка при сохранении настроек",
-            reply_markup=main_inline_kb()
-        )
-
+    await message.answer(result_msg, parse_mode="HTML", reply_markup=product_detail_kb(nm_id))
     await state.clear()
 
 
-# ---------------- Экспорт данных ----------------
-@router.callback_query(F.data == "export_menu")
-@require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
-async def cb_export_menu(query: CallbackQuery, db: DB):
-    """Меню выбора формата экспорта."""
-    products = await db.list_products(query.from_user.id)
+# ============= УДАЛЕНИЕ =============
+
+@router.callback_query(F.data == "remove_product")
+async def cb_start_remove(query: CallbackQuery, product_service: ProductService):
+    """Начать процесс удаления."""
+    user_id = query.from_user.id
     
-    if not products:
-        await query.answer("📭 Нет товаров для экспорта", show_alert=True)
+    # Получаем товары через сервис
+    products_analytics = await product_service.get_products_with_analytics(user_id)
+    
+    if not products_analytics:
+        await query.answer("📭 Нет товаров для удаления", show_alert=True)
         return
+
+    # Формируем данные для клавиатуры
+    products_data = [
+        {
+            'nm_id': item["product"]["nm_id"],
+            'display_name': (
+                item["product"].get("custom_name") or 
+                item["product"].get("name_product", "")
+            )
+        }
+        for item in products_analytics
+    ]
     
+    # Отправляем
     await query.message.edit_text(
-        f"📊 <b>Экспорт товаров</b>\n\n"
-        f"📦 Всего товаров: {len(products)}\n\n"
-        f"Выберите формат файла:",
-        parse_mode="HTML",
-        reply_markup=export_format_kb()
+        f"🗑 <b>Выберите товар для удаления:</b>\n\nВсего товаров: {len(products_data)}",
+        reply_markup=remove_products_kb(products_data),
+        parse_mode="HTML"
     )
     await query.answer()
 
 
-@router.callback_query(F.data == "export_excel")
-@require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
-async def cb_export_excel(query: CallbackQuery, db: DB):
-    """Выгрузка товаров в Excel."""
-    products = await db.list_products(query.from_user.id)
+@router.callback_query(F.data.startswith("rm:"))
+async def cb_confirm_remove(query: CallbackQuery, container: Container):
+    """Подтверждение удаления."""
+    # Извлекаем данные
+    nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
+
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
     
-    if not products:
-        await query.answer("📭 Нет товаров для экспорта", show_alert=True)
+    if not product:
+        await query.answer("❌ Товар не найден", show_alert=True)
         return
     
-    await query.answer("⏳ Формирую файл...")
+    display_name = product.get("custom_name") or product.get("name_product", "")
     
-    try:
-        # Получаем скидку пользователя
-        user = await db.get_user(query.from_user.id)
-        discount = user.get("discount_percent", 0) if user else 0
-        
-        # Генерируем Excel
-        excel_buffer = await generate_excel(products, discount)
-        
-        # Формируем имя файла
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"wb_products_{timestamp}.xlsx"
-        
-        # Отправляем файл
-        document = BufferedInputFile(excel_buffer.read(), filename=filename)
-        
-        caption = (
-            f"📊 <b>Экспорт товаров</b>\n\n"
-            f"📦 Товаров: {len(products)}\n"
-            f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        )
-        
-        if discount > 0:
-            caption += f"\n💳 С учётом скидки кошелька: {discount}%"
-        
-        await query.message.answer_document(
-            document=document,
-            caption=caption,
-            parse_mode="HTML"
-        )
-        
-        logger.info(f"Пользователь {query.from_user.id} экспортировал {len(products)} товаров в Excel")
-        
-    except Exception as e:
-        logger.exception(f"Ошибка при экспорте в Excel: {e}")
-        await query.message.answer(
-            "❌ Произошла ошибка при формировании файла.\nПопробуйте позже."
-        )
+    # Отправляем подтверждение
+    await query.message.edit_text(
+        f"❓ <b>Удалить товар?</b>\n\n"
+        f"📦 {display_name}\n"
+        f"🔢 Артикул: <code>{nm_id}</code>\n\n"
+        f"⚠️ История цен также будет удалена.",
+        reply_markup=confirm_remove_kb(nm_id),
+        parse_mode="HTML"
+    )
+    await query.answer()
 
 
-@router.callback_query(F.data == "export_csv")
-@require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
-async def cb_export_csv(query: CallbackQuery, db: DB):
-    """Выгрузка товаров в CSV."""
-    products = await db.list_products(query.from_user.id)
+@router.callback_query(F.data.startswith("confirm_remove:"))
+async def cb_remove(query: CallbackQuery, product_service: ProductService):
+    """Удалить товар."""
+    # Извлекаем данные
+    nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
     
-    if not products:
-        await query.answer("📭 Нет товаров для экспорта", show_alert=True)
+    # Удаляем через сервис
+    success, msg = await product_service.remove_product(user_id, nm_id)
+    
+    # Отправляем ответ
+    icon = "✅" if success else "❌"
+    await query.message.edit_text(f"{icon} {msg}", reply_markup=main_inline_kb())
+    await query.answer("Товар удалён" if success else "Ошибка удаления")
+
+
+# ============= НАВИГАЦИЯ =============
+
+@router.callback_query(F.data.startswith("back_to_product:"))
+async def cb_back_to_product(query: CallbackQuery, container: Container):
+    """Возврат к детальной информации."""
+    # Извлекаем данные
+    nm_id = int(query.data.split(":", 1)[1])
+    user_id = query.from_user.id
+
+    product_repo = container.get_product_repo()
+    product = await product_repo.get_by_nm_id(user_id, nm_id)
+
+    if not product:
+        await query.answer("❌ Товар не найден", show_alert=True)
         return
+
+    # Удаляем график
+    await query.message.delete()
     
-    await query.answer("⏳ Формирую файл...")
+    # Показываем карточку
+    display_name = product.get("custom_name") or product.get("name_product", "")
+    price = product.get("last_product_price", 0)
     
-    try:
-        # Получаем скидку пользователя
-        user = await db.get_user(query.from_user.id)
-        discount = user.get("discount_percent", 0) if user else 0
-        
-        # Генерируем CSV
-        csv_buffer = await generate_csv(products, discount)
-        
-        # Формируем имя файла
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"wb_products_{timestamp}.csv"
-        
-        # Отправляем файл
-        document = BufferedInputFile(csv_buffer.read(), filename=filename)
-        
-        caption = (
-            f"📊 <b>Экспорт товаров (CSV)</b>\n\n"
-            f"📦 Товаров: {len(products)}\n"
-            f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        )
-        
-        if discount > 0:
-            caption += f"\n💳 С учётом скидки кошелька: {discount}%"
-        
-        await query.message.answer_document(
-            document=document,
-            caption=caption,
-            parse_mode="HTML"
-        )
-        
-        logger.info(f"Пользователь {query.from_user.id} экспортировал {len(products)} товаров в CSV")
-        
-    except Exception as e:
-        logger.exception(f"Ошибка при экспорте в CSV: {e}")
-        await query.message.answer(
-            "❌ Произошла ошибка при формировании файла.\nПопробуйте позже."
-        )
+    await query.message.answer(
+        text=(
+            f"📦 <b>{display_name}</b>\n"
+            f"💰 Цена: {int(price)} ₽\n"
+            f"🔢 Артикул: <code>{product['nm_id']}</code>"
+        ),
+        parse_mode="HTML",
+        reply_markup=product_detail_kb(product['nm_id'])
+    )
+    await query.answer()
+
+
+@router.callback_query(F.data == "back_to_menu")
+async def cb_back_to_menu(query: CallbackQuery):
+    """Возврат в главное меню."""
+    await query.message.edit_text(
+        "🏠 <b>Главное меню</b>\n\nВыберите действие:",
+        parse_mode="HTML",
+        reply_markup=main_inline_kb()
+    )
+    await query.answer()
