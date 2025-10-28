@@ -3,7 +3,9 @@
 Оптимизированная версия с фабриками и переиспользованием кода.
 """
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from typing import List, Dict, Optional
+from typing import List, Dict
+
+from keyboards.builders import PaginatedKeyboard
 
 
 # ============= ФАБРИКИ КНОПОК =============
@@ -21,6 +23,12 @@ def btn_url(text: str, url: str) -> InlineKeyboardButton:
 def back_btn(callback_data: str = "back_to_menu") -> InlineKeyboardButton:
     """Кнопка 'Назад'."""
     return btn("« Назад", callback_data)
+# def back_btn(context: str = "default") -> InlineKeyboardButton:
+#     """
+#     Создаёт кнопку назад.
+#     context: уникальный идентификатор, чтобы различать разные разделы.
+#     """
+#     return InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back:{context}")
 
 
 def cancel_btn() -> InlineKeyboardButton:
@@ -53,7 +61,7 @@ def main_inline_kb() -> InlineKeyboardMarkup:
         [btn("➕ Добавить товар", "add_product")],
         [btn("📦 Мои товары", "list_products")],
         [btn("🗑 Удалить товар", "remove_product")],
-        [btn("📋 Экспорт данных", "export_menu")],
+        [btn("📋 Экспорт в Excel/CSV", "export_menu")],
         [btn("📊 Моя статистика", "my_stats")],
         [btn("⚙️ Настройки", "settings")]
     )
@@ -227,21 +235,31 @@ def products_list_kb(
     products: List[Dict],
     has_filters: bool = False,
     show_export: bool = False,
-    show_upgrade: bool = False
+    show_upgrade: bool = False,
+    page: int = 1
 ) -> InlineKeyboardMarkup:
     """Расширенный список товаров с фильтрами."""
+
+    prepared_products = []
+    for p in products:
+        name = p.get("display_name", "")
+        if len(name) > 35:
+            name = name[:32] + "..."
+        # 🛍️ Добавляем эмодзи перед названием
+        p = p.copy()
+        p["display_name"] = f"🛍️ {name}"
+        prepared_products.append(p)
+
+    paginated_kb = PaginatedKeyboard(
+        items=prepared_products,
+        callback_prefix="product_detail",
+        page=page,
+        per_page=5,
+        id_field="nm_id",
+        name_field="display_name"
+    ).build()
+
     buttons = []
-    
-    # Товары (первые 10)
-    for p in products[:10]:
-        display_name = p['display_name']
-        if len(display_name) > 35:
-            display_name = display_name[:32] + "..."
-        buttons.append([btn(f"📊 {display_name}", f"product_detail:{p['nm_id']}")])
-    
-    # Показать все
-    if len(products) > 10:
-        buttons.append([btn(f"📋 Показать все ({len(products)} товаров)", "show_all_products")])
     
     # Фильтры
     if has_filters:
@@ -256,13 +274,17 @@ def products_list_kb(
         btn("🗑 Удалить товар", "remove_product")
     ])
     
-    # Экспорт для Pro
-    if show_export:
-        buttons.append([btn("📋 Экспорт в Excel/CSV", "export_menu")])
+    # # Экспорт для Pro
+    # if show_export:
+    #     buttons.append([btn("📋 Экспорт в Excel/CSV", "export_menu")])
     
     # Апгрейд для Free
     if show_upgrade:
         buttons.append([btn("🚀 Улучшить тариф (до 50 товаров)", "upsell_from_products_list")])
+
+    # Пагинация
+    if paginated_kb and paginated_kb.inline_keyboard:
+        buttons.extend(paginated_kb.inline_keyboard)
     
     buttons.append([back_btn()])
     

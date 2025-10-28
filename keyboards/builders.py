@@ -129,7 +129,7 @@ class PaginatedKeyboard:
         items: List[Dict],
         callback_prefix: str,
         page: int = 1,
-        per_page: int = 10,
+        per_page: int = 5,
         id_field: str = "id",
         name_field: str = "name"
     ):

@@ -2,8 +2,6 @@
 Обработчики для работы с товарами.
 Только получение данных, вызов сервисов, отправка ответа.
 """
-from typing import Dict, Any
-
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.fsm.context import FSMContext
@@ -286,7 +284,8 @@ async def cb_list_products(
         best_deal_percent,
         discount,
         plan,
-        max_links
+        max_links,
+        page=1
     )
     
     # Формируем данные для клавиатуры
@@ -313,6 +312,87 @@ async def cb_list_products(
         )
     )
     await query.answer()
+
+
+@router.callback_query(F.data.startswith("page:"))
+async def cb_products_page(
+    query: CallbackQuery,
+    user_service: UserService,
+    product_service: ProductService,
+    settings_service: SettingsService
+):
+    """Переход между страницами списка товаров."""
+    user_id = query.from_user.id
+
+    # Получаем номер страницы из callback_data
+    page_str = query.data.split(":")[1]
+    page = int(page_str)
+
+    # Получаем актуальные данные пользователя
+    products_analytics = await product_service.get_products_with_analytics(user_id)
+    if not products_analytics:
+        await query.answer("Нет товаров для отображения", show_alert=True)
+        return
+
+    user = await user_service.get_user_info(user_id)
+    settings = await settings_service.get_user_settings(user_id)
+
+    discount = settings.get("discount", 0)
+    plan = user.get("plan", "plan_free")
+    max_links = user.get("max_links", 5)
+
+    # Подсчёт аналитики
+    total_current_price = sum(p["product"].get("last_product_price", 0) for p in products_analytics)
+    total_potential_savings = sum(p["savings_amount"] for p in products_analytics)
+
+    best_deal = None
+    best_deal_percent = 0
+    for item in products_analytics:
+        if item["savings_percent"] > best_deal_percent:
+            best_deal_percent = item["savings_percent"]
+            best_deal = item["product"]
+
+    # Формируем список товаров для клавиатуры
+    products_data = [
+        {
+            "nm_id": item["product"]["nm_id"],
+            "display_name": item["product"].get("custom_name") or item["product"].get("name_product", "")
+        }
+        for item in products_analytics
+    ]
+
+    # 🧩 Форматируем текст (теперь с параметром `page`)
+    formatted_msg = format_products_list(
+        products_analytics,
+        total_current_price,
+        total_potential_savings,
+        best_deal,
+        best_deal_percent,
+        discount,
+        plan,
+        max_links,
+        page=page,           # <<< вот ключевое
+        per_page=5
+    )
+
+    # 🎛️ Создаём клавиатуру с той же страницей
+    kb = products_list_kb(
+        products=products_data,
+        has_filters=(plan in ["plan_basic", "plan_pro"]),
+        show_export=(plan == "plan_pro"),
+        show_upgrade=(plan == "plan_free" and len(products_analytics) >= 3),
+        page=page
+    )
+
+    # 📝 Обновляем сообщение
+    await query.message.edit_text(
+        formatted_msg,
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+    await query.answer()
+
 
 
 # ============= ФИЛЬТРЫ =============
@@ -536,7 +616,12 @@ async def cb_show_graph(
 
 @router.callback_query(F.data.startswith("rename:"))
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Переименование доступно только на платных тарифах")
-async def cb_rename_start(query: CallbackQuery, state: FSMContext, container: Container):
+async def cb_rename_start(
+    query: CallbackQuery,
+    state: FSMContext,
+    container: Container,
+    user_service: UserService
+):
     """Начать переименование."""
     # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
@@ -602,7 +687,11 @@ async def process_rename(
 
 @router.callback_query(F.data.startswith("notify_settings:"))
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Гибкие уведомления доступны с тарифа Базовый")
-async def cb_notify_settings(query: CallbackQuery, container: Container):
+async def cb_notify_settings(
+    query: CallbackQuery,
+    container: Container,
+    user_service: UserService
+):
     """Показать меню уведомлений."""
     # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])

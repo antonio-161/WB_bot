@@ -7,6 +7,7 @@ from datetime import datetime
 
 from services.product_service import ProductService
 from services.settings_service import SettingsService
+from services.user_service import UserService
 from utils.export_utils import generate_excel, generate_csv
 from utils.decorators import require_plan
 from keyboards.kb import export_format_kb
@@ -21,7 +22,8 @@ logger = logging.getLogger(__name__)
 @require_plan(['plan_pro'], "⛔ Экспорт доступен только на тарифе Продвинутый")
 async def cb_export_menu(
     query: CallbackQuery,
-    product_service: ProductService
+    product_service: ProductService,
+    user_service: UserService
 ):
     """Меню выбора формата экспорта."""
     user_id = query.from_user.id
@@ -47,7 +49,8 @@ async def cb_export_menu(
 async def cb_export_excel(
     query: CallbackQuery,
     product_service: ProductService,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    user_service: UserService
 ):
     """Выгрузка товаров в Excel."""
     user_id = query.from_user.id
@@ -110,7 +113,8 @@ async def cb_export_excel(
 async def cb_export_csv(
     query: CallbackQuery,
     product_service: ProductService,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    user_service: UserService
 ):
     """Выгрузка товаров в CSV."""
     user_id = query.from_user.id

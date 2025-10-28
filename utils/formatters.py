@@ -69,11 +69,13 @@ def format_products_list(
     best_deal_percent: float,
     discount: int,
     plan: str,
-    max_links: int
+    max_links: int,
+    page: int = 1,
+    per_page: int = 5
 ) -> str:
-    """Форматирование списка товаров с аналитикой."""
+    """Форматирование списка товаров с аналитикой (постранично)."""
     
-    text = "📦 <b>Ваши товары</b>\n"
+    text = f"📦 <b>Ваши товары (стр. {page})</b>\n"
     text += f"{'═'*25}\n\n"
     
     # Мини-дашборд
@@ -96,17 +98,24 @@ def format_products_list(
     # Лучшая сделка
     if best_deal:
         best_name = best_deal.get("custom_name") or best_deal.get("name_product", "")
+        if len(best_name) > 35:
+            best_name = best_name[:32] + "..."
         text += (
-            f"🔥 <b>Лучшая сделка сейчас:</b>\n"
-            f"{best_name[:35]}...\n"
+            f"🔥 <b>Лучшая сделка:</b>\n"
+            f"{best_name}\n"
             f"└ Скидка {best_deal_percent:.0f}% от пика цены!\n\n"
         )
     
     text += "📋 <b>Список товаров:</b>\n"
     text += "<i>Отсортировано по выгодности</i>\n\n"
     
-    # Топ-10 товаров
-    for i, item in enumerate(products_analytics[:10], 1):
+    # === ПАГИНАЦИЯ ТОВАРОВ ===
+    total_products = len(products_analytics)
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = products_analytics[start:end]
+    
+    for i, item in enumerate(page_items, start + 1):
         product = item["product"]
         
         # Эмодзи статуса
@@ -137,18 +146,22 @@ def format_products_list(
         else:
             price_str = "—"
         
-        savings_str = ""
-        if item["savings_percent"] > 0:
-            savings_str = f" (-{item['savings_percent']:.0f}%)"
+        savings_str = f" (-{item['savings_percent']:.0f}%)" if item["savings_percent"] > 0 else ""
         
         text += f"{status_emoji} <b>{i}.</b> {display_name}\n"
         text += f"   {stock_emoji} {price_str}{savings_str}\n"
     
-    if len(products_analytics) > 10:
-        text += f"\n<i>... и ещё {len(products_analytics) - 10} товаров</i>\n"
+    # === Навигация и подсказки ===
+    max_page = (total_products + per_page - 1) // per_page
+    if page < max_page:
+        text += f"\n<i>Показаны товары {start + 1}-{end} из {total_products}</i>\n"
+    else:
+        text += f"\n<i>Показаны товары {start + 1}-{total_products} из {total_products}</i>\n"
+    
+    text += f"📄 Страница {page}/{max_page}\n\n"
     
     # Подсказки
-    text += "\n💡 <b>Подсказки:</b>\n"
+    text += "💡 <b>Подсказки:</b>\n"
     
     out_of_stock_count = sum(
         1 for p in products_analytics 
@@ -164,6 +177,7 @@ def format_products_list(
         text += "• 💎 Улучшите тариф для отслеживания до 50 товаров\n"
     
     return text
+
 
 
 def format_product_detail(
