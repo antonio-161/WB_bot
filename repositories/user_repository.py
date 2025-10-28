@@ -92,6 +92,21 @@ class UserRepository:
         """Общее количество пользователей."""
         return await self.db.fetchval("SELECT COUNT(*) FROM users")
     
+    async def count_recent(self, days: int) -> int:
+        """
+        Количество пользователей за последние N дней.
+        
+        Args:
+            days: Количество дней
+        
+        Returns:
+            Количество новых пользователей
+        """
+        return await self.db.fetchval(
+            "SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '%s days'",
+            days
+        )
+    
     async def count_by_plan(self) -> Dict[str, int]:
         """Статистика по тарифам."""
         rows = await self.db.fetch(
@@ -100,6 +115,21 @@ class UserRepository:
                GROUP BY plan"""
         )
         return {r['plan']: r['count'] for r in rows}
+    
+    async def get_plan_stats_with_names(self) -> List[Dict]:
+        """
+        Получить статистику по тарифам с названиями.
+        
+        Returns:
+            Список словарей с полями: plan, plan_name, count
+        """
+        rows = await self.db.fetch(
+            """SELECT plan, plan_name, COUNT(*) as count 
+               FROM users 
+               GROUP BY plan, plan_name 
+               ORDER BY count DESC"""
+        )
+        return [dict(r) for r in rows]
     
     # ===== Обновление полей =====
     

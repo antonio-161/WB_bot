@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 
 from states.user_states import SetPVZState
 from services.settings_service import SettingsService
+from services.user_service import UserService
 from keyboards.kb import reset_pvz_kb, back_to_settings_kb, main_inline_kb
 from utils.decorators import require_plan
 import logging
@@ -20,10 +21,12 @@ logger = logging.getLogger(__name__)
 async def cb_set_pvz(
     query: CallbackQuery,
     state: FSMContext,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    user_service: UserService
 ):
     """Начало установки ПВЗ через callback."""
     user_id = query.from_user.id
+    user = await user_service.get_user_info(user_id)
     
     # Получаем текущий ПВЗ
     pvz_info = await settings_service.get_pvz_info(user_id)

@@ -90,10 +90,10 @@ async def onboarding_skip_discount(query: CallbackQuery, user_service: UserServi
 
 
 @router.callback_query(F.data == "onboarding_set_pvz")
-async def onboarding_pvz(query: CallbackQuery, state: FSMContext):
+async def onboarding_pvz(query: CallbackQuery, state: FSMContext, settings_service: SettingsService):
     """Установка ПВЗ в процессе онбординга."""
     await state.update_data(onboarding=True)
-    await cb_set_pvz(query, state)
+    await cb_set_pvz(query, state, settings_service)
 
 
 @router.callback_query(F.data == "onboarding_skip_pvz")

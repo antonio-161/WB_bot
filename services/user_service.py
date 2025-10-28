@@ -59,32 +59,16 @@ class UserService:
         """Получить статистику пользователя."""
         user = await self.user_repo.get_by_id(user_id)
         if not user:
-            return {
-                "exists": False
-            }
+            return {"exists": False}
         
-        products = await self.product_repo.get_by_user(user_id)
+        # Используем методы репозитория для получения данных
+        total_products = await self.product_repo.count_by_user(user_id)
+        out_of_stock = await self.product_repo.count_out_of_stock(user_id)
+        in_stock = total_products - out_of_stock
         
-        # Подсчёт статистики
-        total_products = len(products)
-        in_stock = sum(1 for p in products if not p.get('out_of_stock', False))
-        out_of_stock = total_products - in_stock
-        
-        # Средняя цена
-        prices = [p['last_product_price'] for p in products if p.get('last_product_price')]
-        avg_price = sum(prices) // len(prices) if prices else 0
-        
-        # Самый дешёвый и дорогой
-        cheapest = None
-        most_expensive = None
-        if prices:
-            sorted_products = sorted(
-                [p for p in products if p.get('last_product_price')],
-                key=lambda x: x['last_product_price']
-            )
-            if sorted_products:
-                cheapest = sorted_products[0]
-                most_expensive = sorted_products[-1]
+        avg_price = await self.product_repo.get_average_price(user_id)
+        cheapest = await self.product_repo.get_cheapest(user_id)
+        most_expensive = await self.product_repo.get_most_expensive(user_id)
         
         return {
             "exists": True,

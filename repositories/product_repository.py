@@ -53,7 +53,7 @@ class ProductRepository:
                 user_id, url, nm_id, name, selected_size
             )
             return product_id
-        except Exception as e:
+        except Exception:
             # Уникальное нарушение (user_id, nm_id)
             return None
     
@@ -121,6 +121,79 @@ class ProductRepository:
             "SELECT COUNT(*) FROM products WHERE user_id = $1 AND out_of_stock = true",
             user_id
         )
+    
+    async def count_out_of_stock_total(self) -> int:
+        """Общее количество товаров без наличия."""
+        return await self.db.fetchval(
+            "SELECT COUNT(*) FROM products WHERE out_of_stock = true"
+        )
+    
+    async def count_recent(self, days: int) -> int:
+        """
+        Количество товаров добавленных за последние N дней.
+        
+        Args:
+            days: Количество дней
+        
+        Returns:
+            Количество товаров
+        """
+        return await self.db.fetchval(
+            "SELECT COUNT(*) FROM products WHERE created_at >= NOW() - INTERVAL '%s days'",
+            days
+        )
+    
+    async def get_top_tracked(self, limit: int = 5) -> List[Dict]:
+        """
+        Получить топ N самых отслеживаемых товаров.
+        
+        Args:
+            limit: Количество товаров
+        
+        Returns:
+            Список товаров с количеством отслеживающих
+        """
+        rows = await self.db.fetch(
+            """SELECT nm_id, name_product, COUNT(*) as trackers
+               FROM products
+               GROUP BY nm_id, name_product
+               ORDER BY trackers DESC
+               LIMIT $1""",
+            limit
+        )
+        return [dict(r) for r in rows]
+    
+    async def get_cheapest(self, user_id: int) -> Optional[Dict]:
+        """Получить самый дешёвый товар пользователя."""
+        row = await self.db.fetchrow(
+            """SELECT * FROM products 
+               WHERE user_id = $1 AND last_product_price IS NOT NULL
+               ORDER BY last_product_price ASC
+               LIMIT 1""",
+            user_id
+        )
+        return dict(row) if row else None
+    
+    async def get_most_expensive(self, user_id: int) -> Optional[Dict]:
+        """Получить самый дорогой товар пользователя."""
+        row = await self.db.fetchrow(
+            """SELECT * FROM products 
+               WHERE user_id = $1 AND last_product_price IS NOT NULL
+               ORDER BY last_product_price DESC
+               LIMIT 1""",
+            user_id
+        )
+        return dict(row) if row else None
+    
+    async def get_average_price(self, user_id: int) -> int:
+        """Получить среднюю цену товаров пользователя."""
+        avg = await self.db.fetchval(
+            """SELECT AVG(last_product_price) 
+               FROM products 
+               WHERE user_id = $1 AND last_product_price IS NOT NULL""",
+            user_id
+        )
+        return int(avg) if avg else 0
     
     # ===== Обновление =====
     

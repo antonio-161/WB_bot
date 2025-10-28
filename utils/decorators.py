@@ -3,7 +3,6 @@ import asyncio
 import logging
 from typing import List
 from aiogram.types import CallbackQuery
-from aiogram.fsm.context import FSMContext
 
 logger = logging.getLogger(__name__)
 
@@ -65,34 +64,22 @@ def require_plan(allowed_plans: List[str], error_message: str = None):
     
     Usage:
         @require_plan(['plan_basic', 'plan_pro'], "⛔ Только для платных тарифов")
-        async def my_handler(query: CallbackQuery, db: DB):
+        async def my_handler(query: CallbackQuery, user_service: UserService):
             # Код выполнится только если тариф подходит
     """
     def decorator(func):
         @functools.wraps(func)
         async def wrapper(query: CallbackQuery, *args, **kwargs):
-            db = None
-            data = kwargs.get("data")
+            # Получаем user_service из kwargs (DI middleware его добавляет)
+            user_service = kwargs.get("user_service")
+            
+            if not user_service:
+                logger.error(f"UserService not found in handler {func.__name__}")
+                await query.answer("❌ Внутренняя ошибка. Попробуйте позже.", show_alert=True)
+                return
 
-            if data and "db" in data:
-                db = data["db"]
-            elif "db" in kwargs:
-                db = kwargs["db"]
-            else:
-                # fallback: из FSMContext
-                state: FSMContext = kwargs.get("state") or next((a for a in args if isinstance(a, FSMContext)), None)
-                if state:
-                    try:
-                        data = await state.get_data()
-                        db = data.get("db")
-                    except Exception:
-                        pass
-
-            if not db:
-                raise ValueError("DB instance not found in handler arguments")
-
-            # Проверка тарифа
-            user = await db.get_user(query.from_user.id)
+            # Проверка тарифа через сервис
+            user = await user_service.get_user_info(query.from_user.id)
             user_plan = user.get("plan", "plan_free") if user else "plan_free"
 
             if user_plan not in allowed_plans:

@@ -65,10 +65,6 @@ class DependencyInjectionMiddleware(BaseMiddleware):
         # Container для доступа к другим сервисам
         data["container"] = self.container
         
-        # Legacy поддержка (для старых частей кода)
-        data["db"] = self.container.db
-        data["price_fetcher"] = self.container.price_fetcher
-        
         return await handler(event, data)
 
 
@@ -157,13 +153,6 @@ def setup_dispatcher(dp: Dispatcher, container: Container):
     dp.message.middleware(RateLimitMiddleware(rate_limit=3))
     dp.update.middleware(DependencyInjectionMiddleware(container))
     
-    # Сохраняем container в bot для доступа из handlers
-    dp["container"] = container
-    
-    # Legacy поддержка
-    dp["db"] = container.db
-    dp["price_fetcher"] = container.price_fetcher
-    
     logger.info("✅ Dispatcher настроен")
 
 
@@ -230,9 +219,6 @@ async def main():
     # Инициализируем сервисы
     container, monitor_service, background_service, reporting_service = \
         await initialize_services(bot)
-    
-    # Сохраняем container в bot
-    # bot["container"] = container
     
     # Настраиваем dispatcher
     setup_dispatcher(dp, container)

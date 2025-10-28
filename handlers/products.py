@@ -322,7 +322,8 @@ async def cb_list_products(
 async def filter_best_deals(
     query: CallbackQuery,
     product_service: ProductService,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    user_service: UserService
 ):
     """Показать товары с лучшими скидками."""
     user_id = query.from_user.id
@@ -368,7 +369,8 @@ async def filter_best_deals(
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Фильтры доступны только на платных тарифах")
 async def filter_price_drops(
     query: CallbackQuery,
-    product_service: ProductService
+    product_service: ProductService,
+    user_service: UserService
 ):
     """Показать товары с падающими ценами."""
     user_id = query.from_user.id

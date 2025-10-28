@@ -9,8 +9,12 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, Filter
 
-from keyboards.kb import admin_menu_kb, back_to_admin_menu_kb, user_management_kb, plan_selection_kb
-from services.db import DB
+from keyboards.kb import (
+    admin_menu_kb, back_to_admin_menu_kb, user_management_kb, 
+    plan_selection_kb
+)
+from repositories.user_repository import UserRepository
+from repositories.product_repository import ProductRepository
 from config import settings
 from utils.error_tracker import get_error_tracker
 from utils.health_monitor import get_health_monitor
@@ -69,43 +73,33 @@ async def cb_admin_menu(query: CallbackQuery):
 
 @router.message(Command("stats"), IsAdmin())
 @router.callback_query(F.data == "admin_stats", IsAdminCallback())
-async def show_stats(event, db: DB):
+async def show_stats(
+    event, 
+    user_repo: UserRepository,
+    product_repo: ProductRepository,
+    price_history_repo
+):
     """Показать общую статистику бота."""
     # Определяем тип события
     is_callback = isinstance(event, CallbackQuery)
     message = event.message if is_callback else event
     
     try:
-        # Получаем статистику
-        async with db.pool.acquire() as conn:
-            # Пользователи
-            total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            users_today = await conn.fetchval(
-                "SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '1 day'"
-            )
-            users_week = await conn.fetchval(
-                "SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '7 days'"
-            )
-            
-            # Товары
-            total_products = await conn.fetchval("SELECT COUNT(*) FROM products")
-            products_today = await conn.fetchval(
-                "SELECT COUNT(*) FROM products WHERE created_at >= NOW() - INTERVAL '1 day'"
-            )
-            
-            # Тарифы
-            plans_stats = await conn.fetch(
-                """SELECT plan, plan_name, COUNT(*) as count 
-                   FROM users 
-                   GROUP BY plan, plan_name 
-                   ORDER BY count DESC"""
-            )
-            
-            # История цен
-            history_count = await conn.fetchval("SELECT COUNT(*) FROM price_history")
-            history_today = await conn.fetchval(
-                "SELECT COUNT(*) FROM price_history WHERE recorded_at >= NOW() - INTERVAL '1 day'"
-            )
+        # Получаем статистику через репозитории
+        total_users = await user_repo.count_total()
+        users_today = await user_repo.count_recent(1)
+        users_week = await user_repo.count_recent(7)
+        
+        # Товары
+        total_products = await product_repo.count_total()
+        products_today = await product_repo.count_recent(1)
+        
+        # Тарифы
+        plans_stats = await user_repo.get_plan_stats_with_names()
+        
+        # История цен
+        history_count = await price_history_repo.count_total()
+        history_today = await price_history_repo.count_recent(1)
         
         # Формируем сообщение
         text = (
@@ -118,7 +112,6 @@ async def show_stats(event, db: DB):
             
             "📦 <b>Товары:</b>\n"
             f"• Всего: {total_products}\n"
-            f"• Добавлено сегодня: +{products_today}\n"
             f"• Среднее на юзера: {total_products / total_users if total_users > 0 else 0:.1f}\n\n"
             
             "💳 <b>Тарифы:</b>\n"
@@ -155,7 +148,7 @@ async def show_stats(event, db: DB):
 
 @router.message(Command("health"), IsAdmin())
 @router.callback_query(F.data == "admin_health", IsAdminCallback())
-async def show_health(event, db: DB):
+async def show_health(event, container):
     """Показать здоровье системы."""
     is_callback = isinstance(event, CallbackQuery)
     message = event.message if is_callback else event
@@ -167,7 +160,7 @@ async def show_health(event, db: DB):
     
     try:
         monitor = get_health_monitor()
-        health_data = await monitor.perform_full_check(db)
+        health_data = await monitor.perform_full_check(container.db)
         formatted_message = monitor.format_status_message(health_data)
         
         if is_callback:
@@ -263,17 +256,12 @@ async def show_api_errors(event):
 # ============= УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ =============
 
 @router.callback_query(F.data == "admin_users", IsAdminCallback())
-async def show_users_menu(query: CallbackQuery, db: DB):
+async def show_users_menu(query: CallbackQuery, user_repo: UserRepository):
     """Меню управления пользователями."""
     try:
-        async with db.pool.acquire() as conn:
-            total = await conn.fetchval("SELECT COUNT(*) FROM users")
-            recent = await conn.fetch(
-                """SELECT id, plan_name, created_at 
-                   FROM users 
-                   ORDER BY created_at DESC 
-                   LIMIT 10"""
-            )
+        total = await user_repo.count_total()
+        recent = await user_repo.get_all()  # Уже отсортировано
+        recent = recent[:10]  # Берём первые 10
         
         text = (
             "👥 <b>Управление пользователями</b>\n\n"
@@ -301,7 +289,11 @@ async def show_users_menu(query: CallbackQuery, db: DB):
 
 
 @router.message(Command("user"), IsAdmin())
-async def cmd_user_manage(message: Message, db: DB):
+async def cmd_user_manage(
+    message: Message, 
+    user_repo: UserRepository,
+    product_repo: ProductRepository
+):
     """Управление конкретным пользователем."""
     try:
         # Извлекаем user_id из команды
@@ -320,19 +312,19 @@ async def cmd_user_manage(message: Message, db: DB):
             return
         
         # Получаем данные пользователя
-        user = await db.get_user(user_id)
+        user = await user_repo.get_by_id(user_id)
         
         if not user:
             await message.answer(f"❌ Пользователь {user_id} не найден")
             return
         
-        products = await db.list_products(user_id)
+        products_count = await product_repo.count_by_user(user_id)
         
         text = (
             f"👤 <b>Пользователь {user_id}</b>\n\n"
             f"📋 Тариф: {user.get('plan_name', 'Неизвестно')}\n"
             f"📊 Лимит товаров: {user.get('max_links', 0)}\n"
-            f"📦 Используется: {len(products)}\n"
+            f"📦 Используется: {products_count}\n"
             f"💳 Скидка WB: {user.get('discount_percent', 0)}%\n"
             f"📍 Регион (dest): {user.get('dest', 'Не установлен')}\n"
             f"📅 Регистрация: {user.get('created_at', 'N/A')}\n\n"
@@ -370,7 +362,7 @@ async def cb_change_plan(query: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("admin_set_plan:"), IsAdminCallback())
-async def cb_set_plan(query: CallbackQuery, db: DB):
+async def cb_set_plan(query: CallbackQuery, user_repo: UserRepository):
     """Установить тариф пользователю."""
     try:
         parts = query.data.split(":")
@@ -386,7 +378,7 @@ async def cb_set_plan(query: CallbackQuery, db: DB):
         
         plan_name = plan_names.get(plan_key, "Неизвестный")
         
-        await db.set_plan(user_id, plan_key, plan_name, max_links)
+        await user_repo.set_plan(user_id, plan_key, plan_name, max_links)
         
         await query.answer(
             f"✅ Тариф изменён на {plan_name} ({max_links} товаров)",
@@ -394,8 +386,17 @@ async def cb_set_plan(query: CallbackQuery, db: DB):
         )
         
         # Возвращаемся к управлению пользователем
-        query.data = f"admin_user_manage:{user_id}"
-        await cmd_user_manage(query.message, db)
+        # Вызываем handler напрямую
+        class FakeMessage:
+            def __init__(self):
+                self.text = f"/user {user_id}"
+                self.from_user = query.from_user
+            
+            async def answer(self, *args, **kwargs):
+                await query.message.edit_text(*args, **kwargs)
+        
+        fake_msg = FakeMessage()
+        await cmd_user_manage(fake_msg, user_repo, None)
         
     except Exception as e:
         logger.exception(f"Ошибка при установке тарифа: {e}")
@@ -475,34 +476,26 @@ async def show_system_info(query: CallbackQuery):
 
 
 @router.callback_query(F.data == "admin_products", IsAdminCallback())
-async def show_products_stats(query: CallbackQuery, db: DB):
+async def show_products_stats(query: CallbackQuery, product_repo: ProductRepository):
     """Статистика по товарам."""
     try:
-        async with db.pool.acquire() as conn:
-            total = await conn.fetchval("SELECT COUNT(*) FROM products")
-            out_of_stock = await conn.fetchval(
-                "SELECT COUNT(*) FROM products WHERE out_of_stock = true"
-            )
-            
-            # Топ товаров по количеству отслеживающих
-            top_products = await conn.fetch(
-                """SELECT nm_id, name_product, COUNT(*) as trackers
-                   FROM products
-                   GROUP BY nm_id, name_product
-                   ORDER BY trackers DESC
-                   LIMIT 5"""
-            )
+        total = await product_repo.count_total()
+        out_of_stock = await product_repo.count_out_of_stock_total()
+        
+        # Топ товаров
+        top_products = await product_repo.get_top_tracked(5)
         
         text = (
             "📦 <b>Статистика товаров</b>\n\n"
             f"Всего товаров в мониторинге: {total}\n"
             f"Нет в наличии: {out_of_stock}\n\n"
-            "<b>Топ-5 популярных товаров:</b>\n"
         )
         
-        for i, product in enumerate(top_products, 1):
-            name = product['name_product'][:30] + "..." if len(product['name_product']) > 30 else product['name_product']
-            text += f"{i}. {name} ({product['trackers']} 👥)\n"
+        if top_products:
+            text += "<b>Топ-5 популярных товаров:</b>\n"
+            for i, product in enumerate(top_products, 1):
+                name = product['name_product'][:30] + "..." if len(product['name_product']) > 30 else product['name_product']
+                text += f"{i}. {name} ({product['trackers']} 👥)\n"
         
         await query.message.edit_text(
             text,
