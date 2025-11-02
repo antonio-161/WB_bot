@@ -71,7 +71,8 @@ def format_products_list(
     plan: str,
     max_links: int,
     page: int = 1,
-    per_page: int = 5
+    per_page: int = 5,
+    sort_mode: str = "savings"
 ) -> str:
     """Форматирование списка товаров с аналитикой (постранично)."""
     
@@ -105,9 +106,15 @@ def format_products_list(
             f"{best_name}\n"
             f"└ Скидка {best_deal_percent:.0f}% от пика цены!\n\n"
         )
-    
+
+    sort_label = {
+        "savings": "по выгодности",
+        "date": "по дате добавления"
+    }.get(sort_mode, "по выгодности")
+
     text += "📋 <b>Список товаров:</b>\n"
-    text += "<i>Отсортировано по выгодности</i>\n\n"
+    text += f"<i>Отсортировано {sort_label}</i>\n\n"
+
     
     # === ПАГИНАЦИЯ ТОВАРОВ ===
     total_products = len(products_analytics)

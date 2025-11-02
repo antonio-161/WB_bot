@@ -4,7 +4,7 @@ import random
 from typing import Dict, Optional
 import aiohttp
 from constants import DEFAULT_DEST
-from utils.cache import product_cache
+from utils.cache import cached, product_cache
 from utils.decorators import retry_on_error
 from utils.error_tracker import get_error_tracker, ErrorType
 
@@ -101,20 +101,12 @@ class PriceFetcher:
             await self._session.close()
 
     @retry_on_error(max_attempts=3, delay=2, exceptions=(PriceFetchError,))
+    @cached(ttl=300, cache_instance=product_cache)
     async def get_product_data(
         self, nm_id: int, dest: Optional[int] = None
     ) -> Optional[Dict]:
-        """Получение данных с кэшированием."""
-
-        # Проверяем кэш
-        cache_key = f"product_{nm_id}_{dest or DEFAULT_DEST}"
-        cached = product_cache.get(cache_key)
+        """Получение данных (кэширование через декоратор)."""
         
-        if cached:
-            self.error_tracker.track_success()
-            logger.debug(f"[nm={nm_id}] Данные из кэша")
-            return cached
-    
         async with self.semaphore:
             await asyncio.sleep(random.uniform(*self.delay_range))
             
@@ -123,10 +115,8 @@ class PriceFetcher:
                 try:
                     xpow_fetcher = await self._get_xpow_fetcher()
                     if xpow_fetcher:
-                        # Пробуем основной метод
                         xpow_token = await xpow_fetcher.get_xpow_token(nm_id, dest or DEFAULT_DEST)
                         
-                        # Если не получилось - пробуем simple метод
                         if not xpow_token:
                             logger.debug(f"[nm={nm_id}] Пробуем simple метод получения x-pow")
                             xpow_token = await xpow_fetcher.get_xpow_simple(nm_id, dest or DEFAULT_DEST)
@@ -166,10 +156,7 @@ class PriceFetcher:
                     }
                     result["sizes"].append(size_info)
 
-                if result:
-                    product_cache.set(cache_key, result)
-                    self.error_tracker.track_success()
-
+                self.error_tracker.track_success()
                 return result
 
             except asyncio.TimeoutError:
@@ -182,7 +169,6 @@ class PriceFetcher:
                 return None
                 
             except aiohttp.ClientError as e:
-                # Определяем тип ошибки
                 error_type = ErrorType.CONNECTION
                 
                 if hasattr(e, 'status'):

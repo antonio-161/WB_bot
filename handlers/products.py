@@ -24,7 +24,8 @@ from utils.decorators import require_plan
 from keyboards.kb import (
     main_inline_kb, sizes_inline_kb, onboarding_kb,
     products_list_kb, product_detail_kb, confirm_remove_kb,
-    back_to_product_kb, notify_mode_kb, remove_products_kb
+    back_to_product_kb, notify_mode_kb, remove_products_kb,
+    simple_kb, back_btn
 )
 from models import PriceHistoryRow
 import logging
@@ -235,9 +236,18 @@ async def cb_list_products(
 ):
     """Показать список товаров с аналитикой."""
     user_id = query.from_user.id
+
+    # Получаем настройки через settings_service
+    settings = await settings_service.get_user_settings(user_id)
+    sort_mode = settings.get("sort_mode", "savings")
+    discount = settings.get("discount", 0)
     
-    # Получаем данные через сервисы
-    products_analytics = await product_service.get_products_with_analytics(user_id)
+    # Получаем данные через сервисы с учётом сортировки
+    products_analytics = await product_service.get_products_with_analytics(
+        user_id,
+        discount=discount,      # ← Передай discount
+        sort_mode=sort_mode     # ← Передай sort_mode
+    )
     
     if not products_analytics:
         await query.message.edit_text(
@@ -275,6 +285,8 @@ async def cb_list_products(
             best_deal_percent = item["savings_percent"]
             best_deal = item["product"]
     
+    sort_mode = settings.get("sort_mode", "savings")
+
     # Форматируем сообщение
     formatted_msg = format_products_list(
         products_analytics,
@@ -285,7 +297,9 @@ async def cb_list_products(
         discount,
         plan,
         max_links,
-        page=1
+        page=1,
+        per_page=5,
+        sort_mode=sort_mode
     )
     
     # Формируем данные для клавиатуры
@@ -328,8 +342,18 @@ async def cb_products_page(
     page_str = query.data.split(":")[1]
     page = int(page_str)
 
-    # Получаем актуальные данные пользователя
-    products_analytics = await product_service.get_products_with_analytics(user_id)
+    # Получаем настройки через settings_service
+    settings = await settings_service.get_user_settings(user_id)
+    sort_mode = settings.get("sort_mode", "savings")
+    discount = settings.get("discount", 0)
+
+    # Получаем данные через сервисы с учётом сортировки
+    products_analytics = await product_service.get_products_with_analytics(
+        user_id,
+        discount=discount,      # ← Передай discount
+        sort_mode=sort_mode     # ← Передай sort_mode
+    )
+
     if not products_analytics:
         await query.answer("Нет товаров для отображения", show_alert=True)
         return
@@ -361,6 +385,8 @@ async def cb_products_page(
         for item in products_analytics
     ]
 
+    sort_mode = settings.get("sort_mode", "savings")
+
     # 🧩 Форматируем текст (теперь с параметром `page`)
     formatted_msg = format_products_list(
         products_analytics,
@@ -372,7 +398,8 @@ async def cb_products_page(
         plan,
         max_links,
         page=page,           # <<< вот ключевое
-        per_page=5
+        per_page=5,
+        sort_mode=sort_mode
     )
 
     # 🎛️ Создаём клавиатуру с той же страницей
@@ -642,8 +669,9 @@ async def cb_rename_start(
     await query.message.answer(
         f"✏️ <b>Переименование товара</b>\n\n"
         f"Текущее название:\n<i>{current_name}</i>\n\n"
-        f"Отправьте новое название или /cancel для отмены.",
-        parse_mode="HTML"
+        f"Отправьте новое название или нажмите Назад для отмены.",
+        parse_mode="HTML",
+        reply_markup=back_to_product_kb(nm_id)
     )
     await query.answer()
 
@@ -655,10 +683,10 @@ async def process_rename(
     product_service: ProductService
 ):
     """Обработка нового названия."""
-    if message.text == "/cancel":
-        await message.answer("❌ Переименование отменено", reply_markup=main_inline_kb())
-        await state.clear()
-        return
+    # if message.text == "/cancel":
+    #     await message.answer("❌ Переименование отменено", reply_markup=main_inline_kb())
+    #     await state.clear()
+    #     return
     
     # Извлекаем данные
     new_name = message.text.strip()
@@ -690,9 +718,11 @@ async def process_rename(
 async def cb_notify_settings(
     query: CallbackQuery,
     container: Container,
+    state: FSMContext,
     user_service: UserService
 ):
     """Показать меню уведомлений."""
+    await state.clear()
     # Извлекаем данные
     nm_id = int(query.data.split(":", 1)[1])
     user_id = query.from_user.id
@@ -749,8 +779,9 @@ async def cb_notify_percent(query: CallbackQuery, state: FSMContext, container: 
         f"📊 <b>Установка процента снижения</b>\n\n"
         f"Введите процент (например: <code>3</code> или <code>10</code>)\n\n"
         f"При снижении цены на указанный процент или больше — вы получите уведомление.\n\n"
-        f"Отправьте /cancel для отмены.",
-        parse_mode="HTML"
+        "Нажмите Назад для отмены.",
+        parse_mode="HTML",
+        reply_markup=simple_kb([back_btn(f"notify_settings:{nm_id}")])
     )
     await query.answer()
 
@@ -779,8 +810,9 @@ async def cb_notify_threshold(query: CallbackQuery, state: FSMContext, container
         f"Текущая цена: {current_price} ₽\n\n"
         f"Введите целевую цену (например: <code>3000</code>)\n\n"
         f"Когда цена станет равна или ниже — вы получите уведомление.\n\n"
-        f"Отправьте /cancel для отмены.",
-        parse_mode="HTML"
+        "Нажмите Назад для отмены.",
+        parse_mode="HTML",
+        reply_markup=simple_kb([back_btn(f"notify_settings:{nm_id}")])
     )
     await query.answer()
 
@@ -826,10 +858,10 @@ async def process_notify_value(
     product_service: ProductService
 ):
     """Обработка введённого значения."""
-    if message.text == "/cancel":
-        await message.answer("❌ Настройка уведомлений отменена", reply_markup=main_inline_kb())
-        await state.clear()
-        return
+    # if message.text == "/cancel":
+    #     await message.answer("❌ Настройка уведомлений отменена", reply_markup=main_inline_kb())
+    #     await state.clear()
+    #     return
 
     # Извлекаем данные
     try:

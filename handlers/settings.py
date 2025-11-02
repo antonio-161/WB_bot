@@ -11,7 +11,8 @@ from services.product_service import ProductService
 from services.settings_service import SettingsService
 from keyboards.kb import (
     settings_kb, back_to_settings_kb, upgrade_plan_kb, choose_plan_kb,
-    main_inline_kb, onboarding_pvz_kb, onboarding_discount_kb
+    main_inline_kb, onboarding_pvz_kb, onboarding_discount_kb, sort_mode_kb,
+    simple_kb, btn
 )
 from handlers.region import cb_set_pvz
 
@@ -57,7 +58,8 @@ async def onboarding_discount(query: CallbackQuery, state: FSMContext):
         "Введите размер скидки в процентах (целое число от 0 до 100).\n"
         "Например: <code>7</code>\n\n"
         "Отправьте /cancel для отмены.",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=simple_kb([btn("⏭ Пропустить", "onboarding_skip_discount")])
     )
     await state.set_state(SetDiscountState.waiting_for_discount)
     await state.update_data(onboarding=True)
@@ -114,10 +116,12 @@ async def onboarding_skip_pvz(query: CallbackQuery):
 @router.callback_query(F.data == "settings")
 async def cb_settings(
     query: CallbackQuery,
+    state: FSMContext,
     settings_service: SettingsService,
     product_service: ProductService
 ):
     """Показать настройки пользователя."""
+    await state.clear()
     user_id = query.from_user.id
     
     # Получаем настройки
@@ -131,12 +135,17 @@ async def cb_settings(
     products_analytics = await product_service.get_products_with_analytics(user_id)
     used_slots = len(products_analytics)
     
+    # ← ДОБАВЛЕНО: Форматируем режим сортировки
+    sort_mode = settings.get("sort_mode", "savings")
+    sort_mode_text = "По выгодности" if sort_mode == "savings" else "По дате добавления"
+    
     text = (
         "⚙️ <b>Ваши настройки</b>\n\n"
         f"📋 Тариф: <b>{settings['plan_name']}</b>\n"
         f"📊 Использовано слотов: <b>{used_slots}/{settings['max_links']}</b>\n"
         f"💳 Скидка WB кошелька: <b>{settings['discount']}%</b>\n"
-        f"📍 ПВЗ: <b>{settings['pvz_info']}</b>\n\n"
+        f"📍 ПВЗ: <b>{settings['pvz_info']}</b>\n"
+        f"🔄 Сортировка: <b>{sort_mode_text}</b>\n\n"  # ← Добавь эту строку
         "Используйте кнопки ниже для изменения настроек."
     )
 
@@ -168,8 +177,9 @@ async def cb_set_discount(
         "Введите размер скидки в процентах (целое число от 0 до 100).\n"
         "Например: <code>7</code>\n\n"
         "Эта скидка будет учитываться при расчёте финальной цены.\n\n"
-        "Отправьте /cancel для отмены.",
-        parse_mode="HTML"
+        "Нажмите Назад для отмены.",
+        parse_mode="HTML",
+        reply_markup=back_to_settings_kb()
     )
     await state.set_state(SetDiscountState.waiting_for_discount)
     await query.answer()
@@ -296,3 +306,50 @@ async def cb_upgrade_plan(query: CallbackQuery):
         reply_markup=choose_plan_kb()
     )
     await query.answer()
+
+
+# ===== Сортировка товаров =====
+@router.callback_query(F.data == "set_sort_mode")
+async def cb_set_sort_mode(query: CallbackQuery, settings_service: SettingsService):
+    """Выбор режима сортировки товаров."""
+    user_id = query.from_user.id
+    
+    # ← ИСПРАВЛЕНО: Получаем из БД через сервис
+    settings = await settings_service.get_user_settings(user_id)
+    current_mode = settings.get("sort_mode", "savings")
+    
+    current_text = "По выгодности" if current_mode == "savings" else "По дате добавления"
+    
+    text = (
+        "📊 <b>Сортировка товаров</b>\n\n"
+        f"Текущий режим: <b>{current_text}</b>\n\n"
+        "Выберите режим сортировки:"
+    )
+
+    await query.message.edit_text(text, parse_mode="HTML", reply_markup=sort_mode_kb(current_mode))
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("sort_mode:"))
+async def cb_apply_sort_mode(
+    query: CallbackQuery,
+    settings_service: SettingsService
+):
+    """Применить режим сортировки."""
+    mode = query.data.split(":", 1)[1]  # "savings" или "date"
+    user_id = query.from_user.id
+
+    success, msg = await settings_service.update_sort_mode(user_id, mode)
+
+    if success:
+        mode_name = "По выгодности" if mode == "savings" else "По дате добавления"
+        await query.answer(f"✅ Сортировка: {mode_name}")
+
+        await query.message.edit_text(
+            f"✅ <b>Режим сортировки обновлён</b>\n\n"
+            f"Теперь товары сортируются: <b>{mode_name}</b>",
+            parse_mode="HTML",
+            reply_markup=back_to_settings_kb()
+        )
+    else:
+        await query.answer(f"❌ {msg}", show_alert=True)

@@ -3,13 +3,26 @@
 Содержит бизнес-логику управления товарами.
 """
 import logging
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
+from constants import DEFAULT_DEST
 from repositories.product_repository import ProductRepository
 from repositories.price_history_repository import PriceHistoryRepository
 from services.price_fetcher import PriceFetcher
+from utils.cache import cached, product_cache, user_cache
 from utils.wb_utils import apply_wallet_discount
 
 logger = logging.getLogger(__name__)
+
+
+def _invalidate_product_cache(product_id: int, nm_id: int, dest: Optional[int] = None):
+    """Очистить кэш товара."""
+    dest = dest or DEFAULT_DEST
+    # Очищаем кэш API WB
+    product_cache.remove(f"product_{nm_id}_{dest}")
+    # Очищаем кэш деталей товара (если кэшировали get_product_detail)
+    product_cache.remove(f"get_product_detail:{product_id}")
 
 
 class ProductService:
@@ -195,6 +208,7 @@ class ProductService:
             qty
         )
     
+    @cached(ttl=600, cache_instance=user_cache)
     async def get_product_detail(
         self,
         product_id: int,
@@ -259,6 +273,9 @@ class ProductService:
         success = await self.product_repo.set_custom_name(product_id, new_name)
         
         if success:
+            product = await self.product_repo.get_by_id(product_id)
+            if product:
+                _invalidate_product_cache(product_id, product['nm_id'])
             return True, "Товар переименован"
         else:
             return False, "Ошибка при переименовании"
@@ -307,6 +324,7 @@ class ProductService:
         success = await self.product_repo.delete_by_nm_id(user_id, nm_id)
         
         if success:
+            _invalidate_product_cache(0, nm_id)
             return True, "Товар удалён из отслеживания"
         else:
             return False, "Товар не найден или уже удалён"
@@ -314,7 +332,8 @@ class ProductService:
     async def get_products_with_analytics(
         self,
         user_id: int,
-        discount: int = 0
+        discount: int = 0,
+        sort_mode: str = "savings"
     ) -> List[Dict]:
         """
         Получить список товаров с аналитикой.
@@ -367,6 +386,12 @@ class ProductService:
         # Сортируем по выгодности
         result.sort(key=lambda x: x["savings_percent"], reverse=True)
         
+        # Сортировка в зависимости от режима
+        if sort_mode == "savings":
+            result.sort(key=lambda x: x["savings_percent"], reverse=True)
+        else:  # date
+            result.sort(key=lambda x: x["product"].get("created_at", datetime.min), reverse=True)
+
         return result
     
     async def filter_best_deals(

@@ -191,6 +191,15 @@ async def cleanup_services(container: Container, background_tasks: list):
     if background_tasks:
         await BackgroundService.cancel_all_tasks(background_tasks)
     
+    # ← ДОБАВЬ: Закрываем все активные соединения
+    if container.db.pool:
+        try:
+            # Завершаем все активные транзакции
+            await container.db.pool.expire_connections()
+            logger.info("✅ Активные соединения БД закрыты")
+        except Exception as e:
+            logger.warning(f"Ошибка при закрытии соединений: {e}")
+    
     # Закрываем XPowFetcher
     try:
         from services.xpow_fetcher import close_xpow_fetcher

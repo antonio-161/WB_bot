@@ -8,7 +8,7 @@ from aiogram.fsm.context import FSMContext
 from states.user_states import SetPVZState
 from services.settings_service import SettingsService
 from services.user_service import UserService
-from keyboards.kb import reset_pvz_kb, back_to_settings_kb, main_inline_kb
+from keyboards.kb import reset_pvz_kb, back_to_settings_kb, main_inline_kb, simple_kb, back_btn
 from utils.decorators import require_plan
 import logging
 
@@ -55,8 +55,9 @@ async def cb_set_pvz(
         "💡 <b>Важно:</b> Адрес должен быть максимально точным, "
         "как вы вводите его при поиске ПВЗ на сайте WB."
         f"{current_info}\n\n"
-        "Отправьте /cancel для отмены.",
-        parse_mode="HTML"
+        "Нажмите Назад для отмены.",
+        parse_mode="HTML",
+        reply_markup=simple_kb([back_btn("show_pvz")])
     )
 
     await state.set_state(SetPVZState.waiting_for_address)
@@ -70,13 +71,13 @@ async def process_pvz_address(
     settings_service: SettingsService
 ):
     """Обработка ввода адреса ПВЗ."""
-    if message.text == "/cancel":
-        await message.answer(
-            "❌ Установка ПВЗ отменена",
-            reply_markup=back_to_settings_kb()
-        )
-        await state.clear()
-        return
+    # if message.text == "/cancel":
+    #     await message.answer(
+    #         "❌ Установка ПВЗ отменена",
+    #         reply_markup=back_to_settings_kb()
+    #     )
+    #     await state.clear()
+    #     return
     
     address = message.text.strip()
 
@@ -153,11 +154,14 @@ async def process_pvz_address(
 @router.callback_query(F.data == "show_pvz")
 async def cb_show_pvz(
     query: CallbackQuery,
+    state: FSMContext,
     settings_service: SettingsService
 ):
     """Показать текущий ПВЗ."""
+    await state.clear()
+
     user_id = query.from_user.id
-    
+
     pvz_info = await settings_service.get_pvz_info(user_id)
 
     if not pvz_info.get("exists"):

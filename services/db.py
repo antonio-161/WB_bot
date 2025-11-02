@@ -63,19 +63,26 @@ class DB:
                     max_size=10,
                     max_inactive_connection_lifetime=300,
                     max_queries=10000,
-                    command_timeout=60
+                    command_timeout=60,
+                    server_settings={'jit': 'off'}
                 )
-                logger.info("✅ Database pool created")
+                logger.info("✅ Соединение с БД установлено")
             except Exception as e:
-                logger.exception(f"Failed to connect to database: {e}")
+                logger.exception(f"Не удалось подключиться к БД: {e}")
                 raise
     
     async def close(self):
         """Закрывает пул подключений."""
         if self.pool:
-            await self.pool.close()
-            self.pool = None
-            logger.info("Database pool closed")
+            try:
+                # ← ДОБАВЬ: Закрываем все соединения gracefully
+                await self.pool.expire_connections()
+                await asyncio.sleep(0.5)  # Даём время на завершение
+                await self.pool.close()
+                self.pool = None
+                logger.info("✅ Соединение с БД закрыто")
+            except Exception as e:
+                logger.warning(f"Ошибка при закрытии соединений: {e}")
     
     # ===== SELECT запросы =====
     
@@ -98,9 +105,19 @@ class DB:
             for row in rows:
                 print(row['id'], row['plan'])
         """
-        async with self.pool.acquire() as conn:
-            return await conn.fetch(query, *args)
-    
+        for attempt in range(3):
+            try:
+                async with self.pool.acquire() as conn:
+                    return await conn.fetch(query, *args)
+            except asyncpg.exceptions.ConnectionDoesNotExistError:
+                if attempt == 2:
+                    raise
+                logger.warning(f"Соединение с БД потеряно. Повторная попытка {attempt + 1}/3")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.exception(f"Ошибка при выполнении запроса: {e}")
+                raise
+
     async def fetchrow(self, query: str, *args) -> Optional[asyncpg.Record]:
         """
         Выполнить SELECT-запрос и вернуть одну строку.
@@ -120,8 +137,18 @@ class DB:
             if user:
                 print(user['plan'])
         """
-        async with self.pool.acquire() as conn:
-            return await conn.fetchrow(query, *args)
+        for attempt in range(3):
+            try:
+                async with self.pool.acquire() as conn:
+                    return await conn.fetchrow(query, *args)
+            except asyncpg.exceptions.ConnectionDoesNotExistError:
+                if attempt == 2:
+                    raise
+                logger.warning(f"Соединение с БД потеряно. Повторная попытка {attempt + 1}/3")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.exception(f"Ошибка при выполнении запроса: {e}")
+                raise
     
     async def fetchval(self, query: str, *args) -> Any:
         """
@@ -138,8 +165,18 @@ class DB:
             count = await db.fetchval("SELECT COUNT(*) FROM users")
             print(f"Total users: {count}")
         """
-        async with self.pool.acquire() as conn:
-            return await conn.fetchval(query, *args)
+        for attempt in range(3):
+            try:
+                async with self.pool.acquire() as conn:
+                    return await conn.fetchval(query, *args)
+            except asyncpg.exceptions.ConnectionDoesNotExistError:
+                if attempt == 2:
+                    raise
+                logger.warning(f"Соединение с БД потеряно. Повторная попытка {attempt + 1}/3")
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.exception(f"Ошибка при выполнении запроса: {e}")
+                raise
     
     # ===== INSERT/UPDATE/DELETE запросы =====
     

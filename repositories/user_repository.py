@@ -3,36 +3,40 @@
 Содержит ВСЮ логику работы с таблицей users.
 """
 from typing import Optional, Dict, List
+
+from utils.cache import cached, SimpleCache
 from services.db import DB
 
+
+_repo_cache = SimpleCache(ttl_seconds=300)
 
 class UserRepository:
     """
     Репозиторий пользователей.
     Отвечает ТОЛЬКО за доступ к данным, БЕЗ бизнес-логики.
     """
-    
+
     def __init__(self, db: DB):
         self.db = db
-    
+
     # ===== CRUD операции =====
-    
+
     async def get_by_id(self, user_id: int) -> Optional[Dict]:
         """
         Получить пользователя по ID.
-        
+
         Returns:
             Dict с данными пользователя или None
         """
         row = await self.db.fetchrow(
-            """SELECT id, plan, plan_name, discount_percent, max_links, 
-                      dest, pvz_address, created_at 
-               FROM users 
+            """SELECT id, plan, plan_name, discount_percent, max_links,
+                      dest, pvz_address, sort_mode, created_at
+               FROM users
                WHERE id = $1""",
             user_id
         )
         return dict(row) if row else None
-    
+
     async def create(self, user_id: int) -> Dict:
         """
         Создать пользователя с дефолтными значениями.
@@ -88,6 +92,7 @@ class UserRepository:
         )
         return [dict(r) for r in rows]
     
+    @cached(cache_instance=_repo_cache)
     async def count_total(self) -> int:
         """Общее количество пользователей."""
         return await self.db.fetchval("SELECT COUNT(*) FROM users")
@@ -107,6 +112,7 @@ class UserRepository:
             days
         )
     
+    @cached(cache_instance=_repo_cache)
     async def count_by_plan(self) -> Dict[str, int]:
         """Статистика по тарифам."""
         rows = await self.db.fetch(
@@ -116,6 +122,7 @@ class UserRepository:
         )
         return {r['plan']: r['count'] for r in rows}
     
+    @cached(cache_instance=_repo_cache)
     async def get_plan_stats_with_names(self) -> List[Dict]:
         """
         Получить статистику по тарифам с названиями.
@@ -156,11 +163,19 @@ class UserRepository:
             discount, user_id
         )
         return result == "UPDATE 1"
-    
+
     async def set_pvz(self, user_id: int, dest: int, address: Optional[str] = None) -> bool:
         """Установить пункт выдачи."""
         result = await self.db.execute(
             "UPDATE users SET dest = $1, pvz_address = $2 WHERE id = $3",
             dest, address, user_id
+        )
+        return result == "UPDATE 1"
+
+    async def set_sort_mode(self, user_id: int, sort_mode: str) -> bool:
+        """Установить режим сортировки."""
+        result = await self.db.execute(
+            "UPDATE users SET sort_mode = $1 WHERE id = $2",
+            sort_mode, user_id
         )
         return result == "UPDATE 1"

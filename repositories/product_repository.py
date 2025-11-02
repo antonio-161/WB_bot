@@ -3,7 +3,12 @@
 """
 from typing import Optional, Dict, List
 from services.db import DB
+from utils.cache import cached, SimpleCache
 from utils.decorators import retry_on_error
+
+
+# Отдельный кэш для репозитория
+_repo_cache = SimpleCache(ttl_seconds=60)  # 1 минута, т.к. данные меняются
 
 
 class ProductRepository:
@@ -104,6 +109,7 @@ class ProductRepository:
     
     # ===== Статистика =====
     
+    @cached(cache_instance=_repo_cache)
     async def count_by_user(self, user_id: int) -> int:
         """Количество товаров у пользователя."""
         return await self.db.fetchval(
@@ -115,6 +121,7 @@ class ProductRepository:
         """Общее количество товаров."""
         return await self.db.fetchval("SELECT COUNT(*) FROM products")
     
+    @cached(cache_instance=_repo_cache)
     async def count_out_of_stock(self, user_id: int) -> int:
         """Количество товаров без наличия."""
         return await self.db.fetchval(
@@ -168,6 +175,8 @@ class ProductRepository:
         row = await self.db.fetchrow(
             """SELECT * FROM products 
                WHERE user_id = $1 AND last_product_price IS NOT NULL
+               AND last_product_price > 0
+               AND out_of_stock = false
                ORDER BY last_product_price ASC
                LIMIT 1""",
             user_id
@@ -179,12 +188,15 @@ class ProductRepository:
         row = await self.db.fetchrow(
             """SELECT * FROM products 
                WHERE user_id = $1 AND last_product_price IS NOT NULL
+               AND last_product_price > 0
+               AND out_of_stock = false
                ORDER BY last_product_price DESC
                LIMIT 1""",
             user_id
         )
         return dict(row) if row else None
     
+    @cached(cache_instance=_repo_cache)
     async def get_average_price(self, user_id: int) -> int:
         """Получить среднюю цену товаров пользователя."""
         avg = await self.db.fetchval(

@@ -7,8 +7,15 @@ from typing import Dict, Optional
 
 from repositories.user_repository import UserRepository
 from repositories.product_repository import ProductRepository
+from utils.cache import cached, user_cache, settings_cache
 
 logger = logging.getLogger(__name__)
+
+
+def _invalidate_user_cache(user_id: int):
+    """Очистить кэш пользователя."""
+    user_cache.remove(f"get_user_info:{user_id}")
+    settings_cache.remove(f"get_user_settings:{user_id}")
 
 
 class UserService:
@@ -22,6 +29,7 @@ class UserService:
         """Убедиться что пользователь существует, создать если нет."""
         return await self.user_repo.ensure_exists(user_id)
     
+    @cached(ttl=600, cache_instance=user_cache)
     async def get_user_info(self, user_id: int) -> Optional[Dict]:
         """Получить полную информацию о пользователе."""
         return await self.user_repo.get_by_id(user_id)
@@ -35,7 +43,12 @@ class UserService:
     ) -> bool:
         """Обновить тарифный план."""
         await self.ensure_user_exists(user_id)
-        return await self.user_repo.set_plan(user_id, plan_key, plan_name, max_links)
+        success = await self.user_repo.set_plan(user_id, plan_key, plan_name, max_links)
+
+        if success:
+            _invalidate_user_cache(user_id)
+        
+        return success
     
     async def update_discount(self, user_id: int, discount: int) -> bool:
         """Обновить процент скидки WB кошелька."""
@@ -43,7 +56,12 @@ class UserService:
             raise ValueError("Скидка должна быть от 0 до 100%")
         
         await self.ensure_user_exists(user_id)
-        return await self.user_repo.set_discount(user_id, discount)
+        success = await self.user_repo.set_discount(user_id, discount)
+        
+        if success:
+            _invalidate_user_cache(user_id)
+        
+        return success
     
     async def update_pvz(
         self,
@@ -53,8 +71,14 @@ class UserService:
     ) -> bool:
         """Обновить пункт выдачи."""
         await self.ensure_user_exists(user_id)
-        return await self.user_repo.set_pvz(user_id, dest, address)
+        success = await self.user_repo.set_pvz(user_id, dest, address)
+
+        if success:
+            _invalidate_user_cache(user_id)
+        
+        return success
     
+    @cached(ttl=180, cache_instance=user_cache)
     async def get_user_statistics(self, user_id: int) -> Dict:
         """Получить статистику пользователя."""
         user = await self.user_repo.get_by_id(user_id)

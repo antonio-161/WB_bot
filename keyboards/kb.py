@@ -186,8 +186,21 @@ def settings_kb() -> InlineKeyboardMarkup:
     return simple_kb(
         [btn("💳 Скидка кошелька", "set_discount")],
         [btn("📍 Мой ПВЗ", "show_pvz")],
+        [btn("📊 Сортировка товаров", "set_sort_mode")],
         [btn("💰 Мой тариф", "my_plan")],
         [back_btn()]
+    )
+
+
+def sort_mode_kb(current_mode: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора режима сортировки."""
+    savings_icon = "✅" if current_mode == "savings" else "☐"
+    date_icon = "✅" if current_mode == "date" else "☐"
+
+    return simple_kb(
+        [btn(f"{savings_icon} По выгодности", "sort_mode:savings")],
+        [btn(f"{date_icon} По дате добавления", "sort_mode:date")],
+        [btn("« Назад", "settings")]
     )
 
 

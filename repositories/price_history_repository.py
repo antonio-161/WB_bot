@@ -2,9 +2,13 @@
 Репозиторий для работы с историей цен.
 """
 from typing import List, Dict
+
+from utils.cache import cached, SimpleCache
 from services.db import DB
 from utils.decorators import retry_on_error
 
+
+_repo_cache = SimpleCache(ttl_seconds=120)
 
 class PriceHistoryRepository:
     """
@@ -125,6 +129,7 @@ class PriceHistoryRepository:
             "plan_pro": extract_count(result_pro)
         }
     
+    @cached(cache_instance=_repo_cache)
     async def count_total(self) -> int:
         """Общее количество записей."""
         return await self.db.fetchval("SELECT COUNT(*) FROM price_history")

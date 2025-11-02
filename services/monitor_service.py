@@ -11,6 +11,7 @@ from aiogram import exceptions
 from models import ProductRow
 from services.container import Container
 from constants import DEFAULT_DEST
+from utils.cache import product_cache
 from utils.wb_utils import apply_wallet_discount
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,9 @@ class MonitorService:
             price_data['qty'],
             price_data['out_of_stock']
         )
+        product = await self.product_repo.get_by_id(product_id)
+        if product:
+            product_cache.remove(f"get_product_detail:{product_id}")
     
     async def _send_notifications(
         self,
