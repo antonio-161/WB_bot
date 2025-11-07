@@ -7,7 +7,7 @@ from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import Command, Filter
+from aiogram.filters import Command, BaseFilter
 
 from keyboards.kb import (
     admin_menu_kb, back_to_admin_menu_kb, user_management_kb, 
@@ -25,16 +25,16 @@ logger = logging.getLogger(__name__)
 
 # ============= ФИЛЬТРЫ =============
 
-class IsAdmin(Filter):
+class IsAdmin(BaseFilter):
     """Фильтр для проверки, является ли пользователь администратором."""
-    
+
     async def __call__(self, message: Message) -> bool:
         return message.from_user.id == settings.ADMIN_CHAT_ID
 
 
-class IsAdminCallback(Filter):
+class IsAdminCallback(BaseFilter):
     """Фильтр для callback query от администратора."""
-    
+
     async def __call__(self, query: CallbackQuery) -> bool:
         return query.from_user.id == settings.ADMIN_CHAT_ID
 

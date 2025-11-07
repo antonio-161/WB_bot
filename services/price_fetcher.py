@@ -4,6 +4,8 @@ import random
 from typing import Dict, Optional
 import aiohttp
 from constants import DEFAULT_DEST
+from services.xpow_fetcher import get_xpow_fetcher
+from utils.loggers import challenge_logger
 from utils.cache import cached, product_cache
 from utils.decorators import retry_on_error
 from utils.error_tracker import get_error_tracker, ErrorType
@@ -20,9 +22,9 @@ async def get_product_data_async(
     session: aiohttp.ClientSession,
     nm_id: int,
     dest: Optional[int] = None,
-    xpow_token: Optional[str] = None,
+    browser_request_data: Optional[Dict] = None,
 ) -> Dict:
-    """Получаем все данные о товаре: цены, остатки, размеры."""
+    """Получаем все данные о товаре с правильными заголовками."""
     if dest is None:
         dest = DEFAULT_DEST
 
@@ -31,46 +33,67 @@ async def get_product_data_async(
         f"&spp=30&hide_dtype=11&ab_testing=false&lang=ru&nm={nm_id}"
     )
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
-        "Origin": "https://www.wildberries.ru",
-        "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Windows"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "cross-site",
-    }
-    
-    # Добавляем x-pow если есть
-    if xpow_token:
-        headers["x-pow"] = xpow_token
-        logger.debug(f"[nm={nm_id}] Используем x-pow токен")
+    session_age = browser_request_data.get("session_age", 0) if browser_request_data else 0
+    session_request_count = browser_request_data.get("session_request_count", 0) if browser_request_data else 0
+
+    if browser_request_data:
+        headers = browser_request_data["headers"].copy()
+        logger.debug(f"[nm={nm_id}] Сессия: age={session_age:.0f}s, req#{session_request_count}")
+    else:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "*/*",
+            "Referer": f"https://www.wildberries.ru/catalog/{nm_id}/detail.aspx",
+        }
 
     for attempt in range(3):
         try:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                 if resp.status != 200:
                     raise PriceFetchError(f"HTTP {resp.status} для nm={nm_id}")
+
+                # ✅ ПРОВЕРЯЕМ CHALLENGE
+                response_xpow = resp.headers.get("x-pow", "")
+                has_challenge = "challenge=" in response_xpow
+
                 data = await resp.json()
                 products = data.get("products", [])
+
                 if not products:
                     raise PriceFetchError(f"Пустой ответ для nm={nm_id}")
-                return products[0]  # возвращаем первый товар
+
+                # ✅ СОХРАНЯЕМ DEBUG ДАННЫЕ
+                total_qty = sum(
+                    stock.get("qty", 0)
+                    for size in products[0].get("sizes", [])
+                    for stock in size.get("stocks", [])
+                )
+                if has_challenge:
+                    challenge_logger.info(
+                        f"CHALLENGE | nm={nm_id} | qty={total_qty} | "
+                        f"session_age={session_age:.0f}s | "
+                        f"session_req#{session_request_count}"
+                    )
+                else:
+                    challenge_logger.info(
+                        f"OK | nm={nm_id} | qty={total_qty} | "
+                        f"session_age={session_age:.0f}s | "
+                        f"session_req#{session_request_count}"
+                    )
+                logger.info(
+                    f"[nm={nm_id}] "
+                    f"qty={total_qty:4d} | "
+                    f"challenge={'YES' if has_challenge else 'NO'} | "
+                    f"session_req#{session_request_count}"
+                )
+                
+                return products[0]
+                
         except aiohttp.ClientError as e:
             if attempt < 2:
-                sleep_time = 2 ** attempt + random.uniform(0, 1)
-                logger.warning(f"[nm={nm_id}] Ошибка запроса ({e}), повтор через {sleep_time:.1f}s")
-                await asyncio.sleep(sleep_time)
+                await asyncio.sleep(2 ** attempt)
                 continue
-            raise PriceFetchError(f"Не удалось получить данные после 3 попыток: {e}")
-        except (KeyError, IndexError, ValueError) as e:
-            raise PriceFetchError(f"Ошибка парсинга данных для nm={nm_id}: {e}")
+            raise PriceFetchError(f"Не удалось получить данные: {e}")
 
 
 class PriceFetcher:
@@ -92,7 +115,6 @@ class PriceFetcher:
     async def _get_xpow_fetcher(self):
         """Получить XPowFetcher если нужно."""
         if self.use_xpow and self._xpow_fetcher is None:
-            from services.xpow_fetcher import get_xpow_fetcher
             self._xpow_fetcher = await get_xpow_fetcher()
         return self._xpow_fetcher
 
@@ -105,43 +127,63 @@ class PriceFetcher:
     async def get_product_data(
         self, nm_id: int, dest: Optional[int] = None
     ) -> Optional[Dict]:
-        """Получение данных (кэширование через декоратор)."""
+        """Получение данных с правильными браузерными заголовками."""
         
         async with self.semaphore:
             await asyncio.sleep(random.uniform(*self.delay_range))
             
-            xpow_token = None
+            # ✅ ПОЛУЧАЕМ ПОЛНЫЕ ДАННЫЕ ИЗ БРАУЗЕРА
+            browser_request_data = None
             if self.use_xpow:
                 try:
                     xpow_fetcher = await self._get_xpow_fetcher()
                     if xpow_fetcher:
-                        xpow_token = await xpow_fetcher.get_xpow_token(nm_id, dest or DEFAULT_DEST)
+                        # ✅ ЖДЁМ ЗАВЕРШЕНИЯ ПРОГРЕВА (если ещё не готов)
+                        if not xpow_fetcher._warmup_done:
+                            logger.info(f"[nm={nm_id}] ⏳ Жду завершения прогрева...")
+                            
+                            # Ждём максимум 30 секунд
+                            for i in range(300):
+                                if xpow_fetcher._warmup_done:
+                                    logger.info(f"[nm={nm_id}] ✅ Прогрев завершён, продолжаю")
+                                    break
+                                await asyncio.sleep(0.1)
+                            
+                            if not xpow_fetcher._warmup_done:
+                                logger.warning(f"[nm={nm_id}] ⚠️ Прогрев не завершился за 30с, продолжаю без x-pow")
                         
-                        if not xpow_token:
-                            logger.debug(f"[nm={nm_id}] Пробуем simple метод получения x-pow")
-                            xpow_token = await xpow_fetcher.get_xpow_simple(nm_id, dest or DEFAULT_DEST)
+                        # Получаем данные сессии
+                        browser_request_data = await xpow_fetcher.get_full_request_data(
+                            nm_id,
+                            dest or DEFAULT_DEST
+                        )
                         
-                        if xpow_token:
-                            logger.debug(f"[nm={nm_id}] X-pow токен получен")
-                        else:
-                            logger.warning(f"[nm={nm_id}] X-pow токен не получен, запрос без токена")
+                        if browser_request_data:
+                            logger.debug(
+                                f"[nm={nm_id}] Заголовки: {len(browser_request_data.get('headers', {}))} шт."
+                            )
+                            
                 except Exception as e:
-                    logger.warning(f"[nm={nm_id}] Не удалось получить x-pow токен: {e}")
+                    logger.warning(f"[nm={nm_id}] Не удалось получить браузерные заголовки: {e}")
             
             try:
                 session = await self._get_session()
+                
+                # ✅ ПЕРЕДАЁМ ПОЛНЫЕ ДАННЫЕ ИЗ БРАУЗЕРА
                 data = await asyncio.wait_for(
-                    get_product_data_async(session, nm_id, dest, xpow_token), 
+                    get_product_data_async(session, nm_id, dest, browser_request_data),
                     timeout=20
                 )
 
-                # Подготавливаем удобный словарь
+                if not data:
+                    return None
+
+                # Обрабатываем ответ
                 result = {
                     "name": data.get("name", f"Товар {nm_id}"),
                     "sizes": []
                 }
 
-                # Обрабатываем размеры
                 for s in data.get("sizes", []):
                     price_data = s.get("price", {})
                     
@@ -158,34 +200,6 @@ class PriceFetcher:
 
                 self.error_tracker.track_success()
                 return result
-
-            except asyncio.TimeoutError:
-                self.error_tracker.track_error(
-                    ErrorType.TIMEOUT,
-                    nm_id=nm_id,
-                    details=f"Timeout after 20s"
-                )
-                logger.error(f"[nm={nm_id}] Timeout при получении данных")
-                return None
-                
-            except aiohttp.ClientError as e:
-                error_type = ErrorType.CONNECTION
-                
-                if hasattr(e, 'status'):
-                    if e.status == 403:
-                        error_type = ErrorType.HTTP_403
-                    elif e.status == 429:
-                        error_type = ErrorType.HTTP_429
-                    elif 500 <= e.status < 600:
-                        error_type = ErrorType.HTTP_5XX
-                
-                self.error_tracker.track_error(
-                    error_type,
-                    nm_id=nm_id,
-                    details=str(e)
-                )
-                logger.error(f"[nm={nm_id}] HTTP ошибка: {e}")
-                return None
                 
             except (KeyError, ValueError, IndexError) as e:
                 self.error_tracker.track_error(
@@ -206,6 +220,7 @@ class PriceFetcher:
                 return None
 
     async def get_products_batch(self, nm_ids: list[int], dest: Optional[int] = None) -> Dict[int, Optional[Dict]]:
+        """Получить данные о нескольких товарах в одном запросе."""
         tasks = [self.get_product_data(nm_id, dest) for nm_id in nm_ids]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return {nm_id: res if not isinstance(res, Exception) else None for nm_id, res in zip(nm_ids, results)}

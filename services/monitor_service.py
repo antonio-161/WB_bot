@@ -13,6 +13,7 @@ from services.container import Container
 from constants import DEFAULT_DEST
 from utils.cache import product_cache
 from utils.wb_utils import apply_wallet_discount
+from services.xpow_fetcher import XPowFetcher
 
 logger = logging.getLogger(__name__)
 

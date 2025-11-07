@@ -9,12 +9,14 @@ from aiogram import Bot, BaseMiddleware, Dispatcher
 from aiogram.types import BotCommand
 
 from config import settings
+from models import ProductRow
 from services.container import Container
 from services.db import DB
 from services.price_fetcher import PriceFetcher
 from services.monitor_service import MonitorService
 from services.background_service import BackgroundService
 from services.reporting_service import ReportingService
+from services.xpow_fetcher import get_xpow_fetcher
 
 # Импорт handlers
 from handlers import (
@@ -30,6 +32,7 @@ from handlers import (
 )
 
 from utils.rate_limiter import RateLimitMiddleware
+from utils.error_tracker import get_error_tracker
 
 # Настройка логирования
 logging.basicConfig(
@@ -75,9 +78,24 @@ async def monitor_loop(
 ):
     """Главный цикл мониторинга цен."""
     logger.info(f"🔄 Запущен цикл мониторинга (интервал: {poll_interval}s)")
-    
+
     while True:
         try:
+            # ✅ ДОБАВЬ ЭТО: Прогрев перед каждым циклом
+            if settings.USE_XPOW:
+                try:
+                    fetcher = await get_xpow_fetcher()
+                    logger.info("🔥 Делаю прогрев перед циклом мониторинга...")
+                    warmup_success = await fetcher.do_warmup_cycle()
+                    
+                    if not warmup_success:
+                        logger.warning("⚠️ Прогрев не удался, продолжаю без него")
+                    
+                    # Небольшая пауза после прогрева
+                    await asyncio.sleep(0.5)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Ошибка прогрева: {e}")
             logger.info("Начинаю цикл мониторинга...")
             
             # Получаем все товары
@@ -92,7 +110,6 @@ async def monitor_loop(
                 continue
             
             # Конвертируем в ProductRow
-            from models import ProductRow
             product_rows = [ProductRow(**p) for p in products]
             
             # Обрабатываем товары пакетами
@@ -113,10 +130,22 @@ async def monitor_loop(
                 await reporting_service.send_hourly_report()
             
             # Проверяем метрики ошибок
-            from utils.error_tracker import get_error_tracker
             error_tracker = get_error_tracker()
             await error_tracker.check_and_alert()
-            
+
+            # ✅ Выводим статистику ПОСЛЕ цикла
+            if settings.USE_XPOW:
+                try:
+                    fetcher = await get_xpow_fetcher()
+                    stats = fetcher.get_stats()
+                    logger.info(
+                        f"📊 XPow stats: открытых вкладок={stats['open_pages']}, "
+                        f"сессий={stats['total_sessions']}, "
+                        f"запросов в текущей сессии={stats['current_session_requests']}"
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось получить статистику: {e}")
+
             await asyncio.sleep(poll_interval)
             
         except Exception as e:
@@ -163,12 +192,21 @@ async def initialize_services(bot: Bot) -> tuple:
     await db.connect()
     logger.info("✅ Подключение к БД установлено")
     
+    # ✅ ДОБАВЬ: Инициализация XPowFetcher ПЕРЕД PriceFetcher
+    if settings.USE_XPOW:
+        logger.info("🔥 Инициализирую XPowFetcher...")
+        try:
+            fetcher_instance = await get_xpow_fetcher()
+            logger.info("✅ XPowFetcher готов")
+        except Exception as e:
+            logger.error(f"❌ Не удалось инициализировать XPowFetcher: {e}")
+    
     # Создаём PriceFetcher
     fetcher = PriceFetcher(use_xpow=settings.USE_XPOW)
     if settings.USE_XPOW:
-        logger.info("✅ X-POW токен включён")
+        logger.info("✅ PriceFetcher настроен с X-POW токеном")
     else:
-        logger.info("ℹ️ X-POW токен отключён")
+        logger.info("ℹ️ PriceFetcher настроен без X-POW токена")
     
     # Создаём контейнер зависимостей
     container = Container(db=db, price_fetcher=fetcher)
@@ -225,9 +263,11 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN)
     dp = Dispatcher()
     
-    # Инициализируем сервисы
+    # ✅ ИЗМЕНИ: Инициализируем сервисы (с прогревом внутри)
+    logger.info("🔧 Инициализирую сервисы...")
     container, monitor_service, background_service, reporting_service = \
         await initialize_services(bot)
+    logger.info("✅ Все сервисы готовы к работе")
     
     # Настраиваем dispatcher
     setup_dispatcher(dp, container)
@@ -237,6 +277,9 @@ async def main():
     
     # Запускаем фоновые задачи
     background_tasks = background_service.start_all_tasks()
+    
+    # ✅ ДОБАВЬ: Логируем перед стартом монитора
+    logger.info("🎯 Запускаю цикл мониторинга цен...")
     
     # Запускаем цикл мониторинга
     monitor_task = asyncio.create_task(
