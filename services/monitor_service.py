@@ -62,8 +62,9 @@ class MonitorService:
             
             if not new_data:
                 metrics["errors"] += 1
-                logger.warning(
-                    f"[nm={product.nm_id}] Не удалось получить данные о товаре"
+                logger.info(
+                    f"[nm={product.nm_id}] Данные не получены (возможно challenge), "
+                    f"пропускаем обновление"
                 )
                 return
             
@@ -256,6 +257,17 @@ class MonitorService:
         price_data: Dict
     ) -> None:
         """Сохранить новые данные о товаре."""
+        
+        # ✅ ДОБАВИТЬ: Не сохраняем нулевую цену если товара нет
+        if price_data['out_of_stock']:
+            # Получаем текущий товар
+            product = await self.product_repo.get_by_id(product_id)
+            
+            # Сохраняем старую цену или оставляем как есть
+            if product and product.get('last_product_price'):
+                price_data['product_price'] = product['last_product_price']
+                price_data['basic_price'] = product.get('last_basic_price', price_data['basic_price'])
+        
         await self.product_repo.update_prices(
             product_id,
             price_data['basic_price'],
@@ -263,10 +275,26 @@ class MonitorService:
             price_data['qty'],
             price_data['out_of_stock']
         )
+        
+        # ✅ ИЗМЕНИТЬ: Не добавляем в историю если товара нет и цена не изменилась
         product = await self.product_repo.get_by_id(product_id)
         if product:
+            should_save_history = (
+                not price_data['out_of_stock'] and  # Товар в наличии
+                (product.get('last_product_price') is None or 
+                price_data['product_price'] != product['last_product_price'])
+            )
+            
+            if should_save_history:
+                await self.price_history_repo.add(
+                    product_id,
+                    price_data['basic_price'],
+                    price_data['product_price'],
+                    price_data['qty']
+                )
+            
             product_cache.remove(f"get_product_detail:{product_id}")
-    
+
     async def _send_notifications(
         self,
         product: ProductRow,
@@ -407,7 +435,7 @@ class MonitorService:
         self,
         products: list[ProductRow],
         batch_size: int = 50,
-        delay_between_batches: float = 5.0
+        delay_between_batches: float = 1.0
     ) -> Dict[str, int]:
         """
         Обработать список товаров пакетами.

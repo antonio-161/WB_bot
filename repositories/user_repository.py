@@ -108,8 +108,8 @@ class UserRepository:
             Количество новых пользователей
         """
         return await self.db.fetchval(
-            "SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '%s days'",
-            days
+            "SELECT COUNT(*) FROM users WHERE created_at >= NOW() - $1::INTERVAL",
+            f"{days} days"
         )
     
     @cached(cache_instance=_repo_cache)

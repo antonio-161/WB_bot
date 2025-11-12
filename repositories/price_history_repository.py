@@ -70,8 +70,8 @@ class PriceHistoryRepository:
             Количество удалённых записей
         """
         result = await self.db.execute(
-            "DELETE FROM price_history WHERE recorded_at < NOW() - INTERVAL '%s days'",
-            days
+            "DELETE FROM price_history WHERE recorded_at < NOW() - $1::INTERVAL",
+            f"{days} days"
         )
         # Извлекаем число из "DELETE 123"
         deleted_count = int(result.split()[-1]) if result != "DELETE 0" else 0

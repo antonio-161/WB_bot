@@ -78,13 +78,54 @@ class ProductRepository:
         )
         return result == "DELETE 1"
     
+    # ==== Мониторинг ====
+    
+    # async def get_batch_for_monitoring(
+    #     self,
+    #     batch_size: int = 100,
+    #     offset: int = 0,
+    #     max_age_minutes: int = 15
+    # ) -> List[Dict]:
+    #     """
+    #     Получить батч товаров для мониторинга.
+    #     Приоритет: давно не обновлялись или никогда не обновлялись.
+        
+    #     Args:
+    #         batch_size: Размер батча
+    #         offset: Смещение для пагинации
+    #         max_age_minutes: Максимальный возраст последнего обновления
+    #     """
+    #     rows = await self.db.fetch(
+    #         """SELECT * FROM products 
+    #         WHERE updated_at < NOW() - $1::interval 
+    #             OR updated_at IS NULL
+    #         ORDER BY updated_at ASC NULLS FIRST
+    #         LIMIT $2 OFFSET $3""",
+    #         f"{max_age_minutes} minutes",
+    #         batch_size,
+    #         offset
+    #     )
+    #     return [dict(r) for r in rows]
+
+    # async def count_stale_products(self, max_age_minutes: int = 15) -> int:
+    #     """Количество товаров требующих обновления."""
+    #     return await self.db.fetchval(
+    #         """SELECT COUNT(*) FROM products 
+    #         WHERE updated_at < NOW() - $1::interval 
+    #             OR updated_at IS NULL""",
+    #         f"{max_age_minutes} minutes"
+    #     )
+    
     # ===== Поиск =====
     
-    async def get_all(self) -> List[Dict]:
-        """Получить все товары (для мониторинга)."""
+    async def get_all_products(self) -> List[Dict]:
+        """
+        Получить ВСЕ товары (используется ТОЛЬКО для админки/экспорта).
+        ⚠️ Не использовать для мониторинга при большом количестве товаров!
+        """
         rows = await self.db.fetch(
             """SELECT * FROM products 
-               ORDER BY updated_at ASC NULLS FIRST"""
+            ORDER BY updated_at ASC NULLS FIRST"""
         )
         return [dict(r) for r in rows]
     
@@ -146,8 +187,8 @@ class ProductRepository:
             Количество товаров
         """
         return await self.db.fetchval(
-            "SELECT COUNT(*) FROM products WHERE created_at >= NOW() - INTERVAL '%s days'",
-            days
+            "SELECT COUNT(*) FROM products WHERE created_at >= NOW() - $1::INTERVAL",
+            f"{days} days"
         )
     
     async def get_top_tracked(self, limit: int = 5) -> List[Dict]:

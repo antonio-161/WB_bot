@@ -1,0 +1,220 @@
+2025-11-12 18:59:23,622 - OK | nm=143627628 | qty= 231 | session_age=1s | session_req#2
+2025-11-12 18:59:23,626 - OK | nm=58072801 | qty= 307 | session_age=1s | session_req#9
+2025-11-12 18:59:23,627 - OK | nm=124736264 | qty= 791 | session_age=1s | session_req#7
+2025-11-12 18:59:23,631 - OK | nm=225190547 | qty= 500 | session_age=1s | session_req#5
+2025-11-12 18:59:23,633 - OK | nm=264514957 | qty= 600 | session_age=1s | session_req#4
+2025-11-12 18:59:23,636 - OK | nm=31299196 | qty= 800 | session_age=1s | session_req#10
+2025-11-12 18:59:23,653 - OK | nm=171494039 | qty= 600 | session_age=1s | session_req#8
+2025-11-12 18:59:23,665 - OK | nm=17223396 | qty=1152 | session_age=1s | session_req#3
+2025-11-12 18:59:23,676 - OK | nm=193997892 | qty=1271 | session_age=1s | session_req#6
+2025-11-12 18:59:23,680 - OK | nm=268078388 | qty= 100 | session_age=1s | session_req#1
+2025-11-12 18:59:24,041 - OK | nm=113464766 | qty=  44 | session_age=1s | session_req#11
+2025-11-12 18:59:24,087 - OK | nm=378548755 | qty=  79 | session_age=1s | session_req#12
+2025-11-12 18:59:24,271 - OK | nm=398389540 | qty= 256 | session_age=1s | session_req#13
+2025-11-12 18:59:24,387 - OK | nm=179992908 | qty= 500 | session_age=1s | session_req#14
+2025-11-12 18:59:24,389 - OK | nm=151303222 | qty=4000 | session_age=1s | session_req#15
+2025-11-12 18:59:24,403 - OK | nm=93378993 | qty= 100 | session_age=1s | session_req#16
+2025-11-12 18:59:24,458 - OK | nm=411170760 | qty= 103 | session_age=1s | session_req#17
+2025-11-12 18:59:24,480 - OK | nm=19252625 | qty= 237 | session_age=2s | session_req#18
+2025-11-12 18:59:24,491 - OK | nm=502412256 | qty= 480 | session_age=2s | session_req#19
+2025-11-12 18:59:24,526 - OK | nm=560809585 | qty=  36 | session_age=2s | session_req#20
+2025-11-12 18:59:25,746 - OK | nm=244782644 | qty= 334 | session_age=1s | session_req#1
+2025-11-12 18:59:25,748 - OK | nm=265778546 | qty= 500 | session_age=1s | session_req#5
+2025-11-12 18:59:25,751 - OK | nm=119919368 | qty= 600 | session_age=1s | session_req#2
+2025-11-12 18:59:25,752 - OK | nm=168505116 | qty= 545 | session_age=1s | session_req#3
+2025-11-12 18:59:25,753 - OK | nm=149686576 | qty=1400 | session_age=1s | session_req#4
+2025-11-12 18:59:25,753 - OK | nm=9563078 | qty= 100 | session_age=1s | session_req#6
+2025-11-12 18:59:25,758 - OK | nm=394054347 | qty= 322 | session_age=1s | session_req#7
+2025-11-12 18:59:25,759 - OK | nm=185500022 | qty= 325 | session_age=1s | session_req#8
+2025-11-12 18:59:25,760 - OK | nm=268845083 | qty=  59 | session_age=1s | session_req#10
+2025-11-12 18:59:25,760 - OK | nm=188322455 | qty=1871 | session_age=1s | session_req#9
+2025-11-12 18:59:26,099 - OK | nm=419998249 | qty= 400 | session_age=1s | session_req#11
+2025-11-12 18:59:26,106 - OK | nm=136768866 | qty= 672 | session_age=1s | session_req#12
+2025-11-12 18:59:26,169 - OK | nm=30451221 | qty=  68 | session_age=1s | session_req#13
+2025-11-12 18:59:26,191 - OK | nm=189603004 | qty= 100 | session_age=1s | session_req#14
+2025-11-12 18:59:26,195 - OK | nm=238031475 | qty=  90 | session_age=1s | session_req#15
+2025-11-12 18:59:26,332 - OK | nm=9866831 | qty= 333 | session_age=1s | session_req#16
+2025-11-12 18:59:26,392 - OK | nm=165241082 | qty= 301 | session_age=1s | session_req#17
+2025-11-12 18:59:26,484 - OK | nm=120932788 | qty= 600 | session_age=1s | session_req#18
+2025-11-12 18:59:26,499 - OK | nm=207068037 | qty=1007 | session_age=1s | session_req#19
+2025-11-12 18:59:26,572 - OK | nm=141498422 | qty=  83 | session_age=1s | session_req#20
+2025-11-12 18:59:27,723 - OK | nm=158704002 | qty= 601 | session_age=1s | session_req#1
+2025-11-12 18:59:27,727 - OK | nm=246057235 | qty= 398 | session_age=1s | session_req#2
+2025-11-12 18:59:27,730 - OK | nm=458327977 | qty=  37 | session_age=1s | session_req#3
+2025-11-12 18:59:27,731 - OK | nm=112516260 | qty= 882 | session_age=1s | session_req#4
+2025-11-12 18:59:27,736 - OK | nm=75912834 | qty= 894 | session_age=1s | session_req#5
+2025-11-12 18:59:27,746 - OK | nm=217899612 | qty= 701 | session_age=1s | session_req#6
+2025-11-12 18:59:27,748 - OK | nm=263512725 | qty= 626 | session_age=1s | session_req#9
+2025-11-12 18:59:27,751 - OK | nm=252979725 | qty= 200 | session_age=1s | session_req#8
+2025-11-12 18:59:27,755 - OK | nm=163405211 | qty=  39 | session_age=1s | session_req#7
+2025-11-12 18:59:27,760 - OK | nm=458414487 | qty=  28 | session_age=1s | session_req#10
+2025-11-12 18:59:29,358 - OK | nm=168246160 | qty= 200 | session_age=2s | session_req#11
+2025-11-12 18:59:29,519 - OK | nm=458210960 | qty=   9 | session_age=2s | session_req#12
+2025-11-12 18:59:29,609 - OK | nm=444618006 | qty=  16 | session_age=2s | session_req#13
+2025-11-12 18:59:29,672 - OK | nm=494609190 | qty= 603 | session_age=2s | session_req#14
+2025-11-12 18:59:29,725 - OK | nm=103585953 | qty=   0 | session_age=2s | session_req#15
+2025-11-12 19:09:37,273 - OK | nm=171494039 | qty= 600 | session_age=1s | session_req#3
+2025-11-12 19:09:37,278 - OK | nm=398389540 | qty= 256 | session_age=1s | session_req#7
+2025-11-12 19:09:37,280 - OK | nm=378548755 | qty=  79 | session_age=1s | session_req#10
+2025-11-12 19:09:37,282 - OK | nm=143627628 | qty= 231 | session_age=1s | session_req#8
+2025-11-12 19:09:37,284 - OK | nm=264514957 | qty= 600 | session_age=1s | session_req#9
+2025-11-12 19:09:37,312 - OK | nm=179992908 | qty= 500 | session_age=1s | session_req#1
+2025-11-12 19:09:37,319 - OK | nm=113464766 | qty=  44 | session_age=1s | session_req#2
+2025-11-12 19:09:37,320 - OK | nm=225190547 | qty= 500 | session_age=1s | session_req#5
+2025-11-12 19:09:37,329 - OK | nm=58072801 | qty= 306 | session_age=1s | session_req#6
+2025-11-12 19:09:37,342 - OK | nm=124736264 | qty= 791 | session_age=1s | session_req#4
+2025-11-12 19:09:37,720 - OK | nm=93378993 | qty= 100 | session_age=1s | session_req#11
+2025-11-12 19:09:37,746 - OK | nm=151303222 | qty=3998 | session_age=1s | session_req#12
+2025-11-12 19:09:37,762 - OK | nm=17223396 | qty=1152 | session_age=1s | session_req#13
+2025-11-12 19:09:37,945 - OK | nm=560809585 | qty=  36 | session_age=1s | session_req#14
+2025-11-12 19:09:37,967 - OK | nm=193997892 | qty=1272 | session_age=1s | session_req#15
+2025-11-12 19:09:38,003 - OK | nm=411170760 | qty= 103 | session_age=1s | session_req#16
+2025-11-12 19:09:38,063 - OK | nm=502412256 | qty= 479 | session_age=1s | session_req#17
+2025-11-12 19:09:38,076 - OK | nm=31299196 | qty= 800 | session_age=1s | session_req#18
+2025-11-12 19:09:38,142 - OK | nm=19252625 | qty= 230 | session_age=1s | session_req#19
+2025-11-12 19:09:38,157 - OK | nm=119919368 | qty= 600 | session_age=2s | session_req#20
+2025-11-12 19:09:39,657 - OK | nm=244782644 | qty= 334 | session_age=1s | session_req#1
+2025-11-12 19:09:39,658 - OK | nm=265778546 | qty= 500 | session_age=1s | session_req#2
+2025-11-12 19:09:39,668 - OK | nm=268845083 | qty=  59 | session_age=1s | session_req#6
+2025-11-12 19:09:39,669 - OK | nm=268078388 | qty= 100 | session_age=1s | session_req#3
+2025-11-12 19:09:39,670 - OK | nm=149686576 | qty=1400 | session_age=1s | session_req#4
+2025-11-12 19:09:39,672 - OK | nm=394054347 | qty= 322 | session_age=1s | session_req#7
+2025-11-12 19:09:39,672 - OK | nm=168505116 | qty= 545 | session_age=1s | session_req#5
+2025-11-12 19:09:39,676 - OK | nm=188322455 | qty=1872 | session_age=1s | session_req#8
+2025-11-12 19:09:39,678 - OK | nm=9563078 | qty= 100 | session_age=1s | session_req#9
+2025-11-12 19:09:39,679 - OK | nm=185500022 | qty= 324 | session_age=1s | session_req#10
+2025-11-12 19:09:40,074 - OK | nm=9866831 | qty= 332 | session_age=1s | session_req#11
+2025-11-12 19:09:40,198 - OK | nm=207068037 | qty=1003 | session_age=1s | session_req#12
+2025-11-12 19:09:40,251 - OK | nm=136768866 | qty= 672 | session_age=1s | session_req#13
+2025-11-12 19:09:40,297 - OK | nm=165241082 | qty= 301 | session_age=1s | session_req#14
+2025-11-12 19:09:40,378 - OK | nm=189603004 | qty= 100 | session_age=1s | session_req#15
+2025-11-12 19:09:40,386 - OK | nm=141498422 | qty=  83 | session_age=1s | session_req#16
+2025-11-12 19:09:40,446 - OK | nm=238031475 | qty=  89 | session_age=1s | session_req#17
+2025-11-12 19:09:40,463 - OK | nm=120932788 | qty= 600 | session_age=1s | session_req#18
+2025-11-12 19:09:40,497 - OK | nm=419998249 | qty= 400 | session_age=1s | session_req#19
+2025-11-12 19:09:40,514 - OK | nm=30451221 | qty=  68 | session_age=1s | session_req#20
+2025-11-12 19:09:41,898 - OK | nm=112516260 | qty= 881 | session_age=1s | session_req#1
+2025-11-12 19:09:41,902 - OK | nm=458327977 | qty=  37 | session_age=1s | session_req#3
+2025-11-12 19:09:41,904 - OK | nm=75912834 | qty= 893 | session_age=1s | session_req#2
+2025-11-12 19:09:41,908 - OK | nm=246057235 | qty= 397 | session_age=1s | session_req#5
+2025-11-12 19:09:41,912 - OK | nm=217899612 | qty= 701 | session_age=1s | session_req#4
+2025-11-12 19:09:41,918 - OK | nm=158704002 | qty= 601 | session_age=1s | session_req#6
+2025-11-12 19:09:41,920 - OK | nm=458414487 | qty=  28 | session_age=1s | session_req#8
+2025-11-12 19:09:41,921 - OK | nm=163405211 | qty=  39 | session_age=1s | session_req#10
+2025-11-12 19:09:41,929 - OK | nm=263512725 | qty= 626 | session_age=1s | session_req#9
+2025-11-12 19:09:41,930 - OK | nm=252979725 | qty= 200 | session_age=1s | session_req#7
+2025-11-12 19:09:43,328 - OK | nm=458210960 | qty=   9 | session_age=2s | session_req#11
+2025-11-12 19:09:43,451 - OK | nm=168246160 | qty= 200 | session_age=2s | session_req#12
+2025-11-12 19:09:43,453 - OK | nm=444618006 | qty=  16 | session_age=2s | session_req#13
+2025-11-12 19:09:43,538 - OK | nm=494609190 | qty= 603 | session_age=2s | session_req#14
+2025-11-12 19:09:43,746 - OK | nm=103585953 | qty=   0 | session_age=2s | session_req#15
+2025-11-12 19:19:53,489 - OK | nm=264514957 | qty= 600 | session_age=1s | session_req#4
+2025-11-12 19:19:53,493 - OK | nm=143627628 | qty= 231 | session_age=1s | session_req#5
+2025-11-12 19:19:53,495 - OK | nm=171494039 | qty= 600 | session_age=1s | session_req#1
+2025-11-12 19:19:53,514 - OK | nm=93378993 | qty= 100 | session_age=1s | session_req#7
+2025-11-12 19:19:53,521 - OK | nm=17223396 | qty=1152 | session_age=1s | session_req#3
+2025-11-12 19:19:53,523 - OK | nm=398389540 | qty= 256 | session_age=1s | session_req#2
+2025-11-12 19:19:53,524 - OK | nm=151303222 | qty=3997 | session_age=1s | session_req#6
+2025-11-12 19:19:53,526 - OK | nm=560809585 | qty=  36 | session_age=1s | session_req#9
+2025-11-12 19:19:53,542 - OK | nm=378548755 | qty=  79 | session_age=1s | session_req#10
+2025-11-12 19:19:53,556 - OK | nm=179992908 | qty= 500 | session_age=1s | session_req#8
+2025-11-12 19:19:53,929 - OK | nm=225190547 | qty= 500 | session_age=1s | session_req#11
+2025-11-12 19:19:53,956 - OK | nm=502412256 | qty= 479 | session_age=1s | session_req#12
+2025-11-12 19:19:54,009 - OK | nm=124736264 | qty= 790 | session_age=1s | session_req#13
+2025-11-12 19:19:54,023 - OK | nm=31299196 | qty= 800 | session_age=1s | session_req#14
+2025-11-12 19:19:54,043 - OK | nm=411170760 | qty= 102 | session_age=1s | session_req#15
+2025-11-12 19:19:54,103 - OK | nm=19252625 | qty= 223 | session_age=1s | session_req#16
+2025-11-12 19:19:54,136 - OK | nm=193997892 | qty=1272 | session_age=1s | session_req#17
+2025-11-12 19:19:54,317 - OK | nm=244782644 | qty= 333 | session_age=1s | session_req#18
+2025-11-12 19:19:54,338 - OK | nm=113464766 | qty=  44 | session_age=1s | session_req#19
+2025-11-12 19:19:54,414 - OK | nm=119919368 | qty= 600 | session_age=2s | session_req#20
+2025-11-12 19:19:55,716 - OK | nm=58072801 | qty= 307 | session_age=1s | session_req#1
+2025-11-12 19:19:55,719 - OK | nm=268845083 | qty=  59 | session_age=1s | session_req#2
+2025-11-12 19:19:55,724 - OK | nm=265778546 | qty= 500 | session_age=1s | session_req#3
+2025-11-12 19:19:55,725 - OK | nm=149686576 | qty=1400 | session_age=1s | session_req#5
+2025-11-12 19:19:55,729 - OK | nm=268078388 | qty= 100 | session_age=1s | session_req#4
+2025-11-12 19:19:55,734 - OK | nm=9563078 | qty= 100 | session_age=1s | session_req#7
+2025-11-12 19:19:55,736 - OK | nm=168505116 | qty= 545 | session_age=1s | session_req#8
+2025-11-12 19:19:55,737 - OK | nm=394054347 | qty= 322 | session_age=1s | session_req#6
+2025-11-12 19:19:55,738 - OK | nm=185500022 | qty= 324 | session_age=1s | session_req#9
+2025-11-12 19:19:55,740 - OK | nm=188322455 | qty=1871 | session_age=1s | session_req#10
+2025-11-12 19:19:56,135 - OK | nm=9866831 | qty= 332 | session_age=1s | session_req#11
+2025-11-12 19:19:56,224 - OK | nm=120932788 | qty= 600 | session_age=1s | session_req#12
+2025-11-12 19:19:56,277 - OK | nm=207068037 | qty=1000 | session_age=1s | session_req#13
+2025-11-12 19:19:56,400 - OK | nm=189603004 | qty= 100 | session_age=1s | session_req#14
+2025-11-12 19:19:56,409 - OK | nm=30451221 | qty=  68 | session_age=1s | session_req#15
+2025-11-12 19:19:56,441 - OK | nm=136768866 | qty= 672 | session_age=1s | session_req#16
+2025-11-12 19:19:56,447 - OK | nm=238031475 | qty=  88 | session_age=1s | session_req#17
+2025-11-12 19:19:56,453 - OK | nm=165241082 | qty= 301 | session_age=1s | session_req#18
+2025-11-12 19:19:56,514 - OK | nm=141498422 | qty=  83 | session_age=1s | session_req#19
+2025-11-12 19:19:56,539 - OK | nm=419998249 | qty= 400 | session_age=1s | session_req#20
+2025-11-12 19:19:58,017 - OK | nm=163405211 | qty=  39 | session_age=1s | session_req#10
+2025-11-12 19:19:58,018 - OK | nm=75912834 | qty= 893 | session_age=1s | session_req#1
+2025-11-12 19:19:58,022 - OK | nm=458327977 | qty=  37 | session_age=1s | session_req#2
+2025-11-12 19:19:58,027 - OK | nm=158704002 | qty= 601 | session_age=1s | session_req#4
+2025-11-12 19:19:58,028 - OK | nm=458414487 | qty=  28 | session_age=1s | session_req#5
+2025-11-12 19:19:58,028 - OK | nm=217899612 | qty= 701 | session_age=1s | session_req#3
+2025-11-12 19:19:58,037 - OK | nm=252979725 | qty= 200 | session_age=1s | session_req#7
+2025-11-12 19:19:58,040 - OK | nm=112516260 | qty= 880 | session_age=1s | session_req#6
+2025-11-12 19:19:58,046 - OK | nm=263512725 | qty= 627 | session_age=1s | session_req#8
+2025-11-12 19:19:58,054 - OK | nm=246057235 | qty= 398 | session_age=1s | session_req#9
+2025-11-12 19:19:59,539 - OK | nm=494609190 | qty= 603 | session_age=2s | session_req#11
+2025-11-12 19:19:59,595 - OK | nm=458210960 | qty=   8 | session_age=2s | session_req#12
+2025-11-12 19:19:59,688 - OK | nm=444618006 | qty=  16 | session_age=2s | session_req#13
+2025-11-12 19:19:59,818 - OK | nm=103585953 | qty=   0 | session_age=2s | session_req#14
+2025-11-12 19:19:59,880 - OK | nm=168246160 | qty= 200 | session_age=2s | session_req#15
+2025-11-12 19:30:07,680 - OK | nm=225190547 | qty= 500 | session_age=1s | session_req#2
+2025-11-12 19:30:07,708 - OK | nm=143627628 | qty= 231 | session_age=1s | session_req#4
+2025-11-12 19:30:07,712 - OK | nm=502412256 | qty= 479 | session_age=1s | session_req#6
+2025-11-12 19:30:07,713 - OK | nm=171494039 | qty= 600 | session_age=1s | session_req#3
+2025-11-12 19:30:07,716 - OK | nm=31299196 | qty= 800 | session_age=1s | session_req#5
+2025-11-12 19:30:07,722 - OK | nm=93378993 | qty= 100 | session_age=1s | session_req#10
+2025-11-12 19:30:07,728 - OK | nm=19252625 | qty= 216 | session_age=1s | session_req#7
+2025-11-12 19:30:07,744 - OK | nm=124736264 | qty= 790 | session_age=1s | session_req#8
+2025-11-12 19:30:07,750 - OK | nm=411170760 | qty= 101 | session_age=1s | session_req#9
+2025-11-12 19:30:07,756 - OK | nm=264514957 | qty= 600 | session_age=1s | session_req#1
+2025-11-12 19:30:08,130 - OK | nm=58072801 | qty= 306 | session_age=1s | session_req#12
+2025-11-12 19:30:08,132 - OK | nm=113464766 | qty=  44 | session_age=1s | session_req#13
+2025-11-12 19:30:08,133 - OK | nm=17223396 | qty=1152 | session_age=1s | session_req#11
+2025-11-12 19:30:08,246 - OK | nm=398389540 | qty= 256 | session_age=1s | session_req#14
+2025-11-12 19:30:08,294 - OK | nm=244782644 | qty= 334 | session_age=1s | session_req#15
+2025-11-12 19:30:08,501 - OK | nm=560809585 | qty=  36 | session_age=1s | session_req#16
+2025-11-12 19:30:08,529 - OK | nm=119919368 | qty= 600 | session_age=1s | session_req#18
+2025-11-12 19:30:08,535 - OK | nm=151303222 | qty=3996 | session_age=1s | session_req#17
+2025-11-12 19:30:08,541 - OK | nm=193997892 | qty=1273 | session_age=1s | session_req#19
+2025-11-12 19:30:08,558 - OK | nm=378548755 | qty=  79 | session_age=1s | session_req#20
+2025-11-12 19:30:09,741 - OK | nm=265778546 | qty= 500 | session_age=1s | session_req#1
+2025-11-12 19:30:09,749 - OK | nm=149686576 | qty=1400 | session_age=1s | session_req#2
+2025-11-12 19:30:09,765 - OK | nm=188322455 | qty=1870 | session_age=1s | session_req#8
+2025-11-12 19:30:09,765 - OK | nm=268845083 | qty=  59 | session_age=1s | session_req#4
+2025-11-12 19:30:09,769 - OK | nm=268078388 | qty= 100 | session_age=1s | session_req#6
+2025-11-12 19:30:09,770 - OK | nm=394054347 | qty= 322 | session_age=1s | session_req#5
+2025-11-12 19:30:09,771 - OK | nm=179992908 | qty= 500 | session_age=1s | session_req#3
+2025-11-12 19:30:09,775 - OK | nm=9563078 | qty= 100 | session_age=1s | session_req#7
+2025-11-12 19:30:09,780 - OK | nm=185500022 | qty= 323 | session_age=1s | session_req#9
+2025-11-12 19:30:09,789 - OK | nm=168505116 | qty= 545 | session_age=1s | session_req#10
+2025-11-12 19:30:10,128 - OK | nm=9866831 | qty= 332 | session_age=1s | session_req#11
+2025-11-12 19:30:10,180 - OK | nm=238031475 | qty=  88 | session_age=1s | session_req#12
+2025-11-12 19:30:10,187 - OK | nm=120932788 | qty= 600 | session_age=1s | session_req#13
+2025-11-12 19:30:10,233 - OK | nm=207068037 | qty= 996 | session_age=1s | session_req#14
+2025-11-12 19:30:10,400 - OK | nm=189603004 | qty= 100 | session_age=1s | session_req#15
+2025-11-12 19:30:10,464 - OK | nm=136768866 | qty= 672 | session_age=1s | session_req#16
+2025-11-12 19:30:10,501 - OK | nm=165241082 | qty= 301 | session_age=1s | session_req#17
+2025-11-12 19:30:10,504 - OK | nm=419998249 | qty= 400 | session_age=1s | session_req#18
+2025-11-12 19:30:10,620 - OK | nm=30451221 | qty=  68 | session_age=1s | session_req#19
+2025-11-12 19:30:10,632 - OK | nm=141498422 | qty=  83 | session_age=1s | session_req#20
+2025-11-12 19:30:11,906 - OK | nm=158704002 | qty= 601 | session_age=1s | session_req#3
+2025-11-12 19:30:11,911 - OK | nm=163405211 | qty=  39 | session_age=1s | session_req#1
+2025-11-12 19:30:11,912 - OK | nm=75912834 | qty= 893 | session_age=1s | session_req#2
+2025-11-12 19:30:11,916 - OK | nm=263512725 | qty= 626 | session_age=1s | session_req#8
+2025-11-12 19:30:11,918 - OK | nm=246057235 | qty= 398 | session_age=1s | session_req#10
+2025-11-12 19:30:11,920 - OK | nm=252979725 | qty= 200 | session_age=1s | session_req#5
+2025-11-12 19:30:11,921 - OK | nm=458327977 | qty=  37 | session_age=1s | session_req#6
+2025-11-12 19:30:11,921 - OK | nm=217899612 | qty= 701 | session_age=1s | session_req#9
+2025-11-12 19:30:11,929 - OK | nm=112516260 | qty= 880 | session_age=1s | session_req#7
+2025-11-12 19:30:11,938 - OK | nm=458414487 | qty=  27 | session_age=1s | session_req#4
+2025-11-12 19:30:13,402 - OK | nm=458210960 | qty=   8 | session_age=2s | session_req#11
+2025-11-12 19:30:13,472 - OK | nm=103585953 | qty=   0 | session_age=2s | session_req#12
+2025-11-12 19:30:13,503 - OK | nm=168246160 | qty= 200 | session_age=2s | session_req#13
+2025-11-12 19:30:13,505 - OK | nm=444618006 | qty=  16 | session_age=2s | session_req#14
+2025-11-12 19:30:13,541 - OK | nm=494609190 | qty= 603 | session_age=2s | session_req#15

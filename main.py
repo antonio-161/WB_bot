@@ -93,14 +93,15 @@ async def monitor_loop(
                     
                     # Небольшая пауза после прогрева
                     await asyncio.sleep(0.5)
-                    
+
                 except Exception as e:
                     logger.error(f"❌ Ошибка прогрева: {e}")
+
             logger.info("Начинаю цикл мониторинга...")
             
             # Получаем все товары
             product_repo = monitor_service.container.get_product_repo()
-            products = await product_repo.get_all()
+            products = await product_repo.get_all_products()
             
             logger.info(f"📊 Товаров в БД: {len(products)}")
             
@@ -116,7 +117,7 @@ async def monitor_loop(
             cycle_metrics = await monitor_service.process_batch(
                 product_rows,
                 batch_size=50,
-                delay_between_batches=5.0
+                delay_between_batches=1.0
             )
             
             # Логируем результаты
