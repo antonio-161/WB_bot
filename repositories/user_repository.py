@@ -10,6 +10,7 @@ from services.db import DB
 
 _repo_cache = SimpleCache(ttl_seconds=300)
 
+
 class UserRepository:
     """
     Репозиторий пользователей.
@@ -40,7 +41,7 @@ class UserRepository:
     async def create(self, user_id: int) -> Dict:
         """
         Создать пользователя с дефолтными значениями.
-        
+
         Returns:
             Dict с данными созданного пользователя
         """
@@ -51,11 +52,11 @@ class UserRepository:
             user_id
         )
         return await self.get_by_id(user_id)
-    
+
     async def ensure_exists(self, user_id: int) -> Dict:
         """
         Создать пользователя если не существует, иначе вернуть существующего.
-        
+
         Returns:
             Dict с данными пользователя
         """
@@ -63,11 +64,11 @@ class UserRepository:
         if user:
             return user
         return await self.create(user_id)
-    
+
     async def delete(self, user_id: int) -> bool:
         """
         Удалить пользователя.
-        
+
         Returns:
             True если удалён, False если не существовал
         """
@@ -76,14 +77,16 @@ class UserRepository:
             user_id
         )
         return result == "DELETE 1"
-    
+
     # ===== Специфичные методы для User =====
-    
+
     async def get_all(self) -> List[Dict]:
         """Получить всех пользователей."""
-        rows = await self.db.fetch("SELECT * FROM users ORDER BY created_at DESC")
+        rows = await self.db.fetch(
+            "SELECT * FROM users ORDER BY created_at DESC"
+        )
         return [dict(r) for r in rows]
-    
+
     async def get_by_plan(self, plan_key: str) -> List[Dict]:
         """Получить пользователей по тарифу."""
         rows = await self.db.fetch(
@@ -91,55 +94,56 @@ class UserRepository:
             plan_key
         )
         return [dict(r) for r in rows]
-    
+
     @cached(cache_instance=_repo_cache)
     async def count_total(self) -> int:
         """Общее количество пользователей."""
         return await self.db.fetchval("SELECT COUNT(*) FROM users")
-    
+
     async def count_recent(self, days: int) -> int:
         """
         Количество пользователей за последние N дней.
-        
+
         Args:
             days: Количество дней
-        
+
         Returns:
             Количество новых пользователей
         """
         return await self.db.fetchval(
-            "SELECT COUNT(*) FROM users WHERE created_at >= NOW() - $1::INTERVAL",
+            """SELECT COUNT(*) FROM users
+               WHERE created_at >= NOW() - $1::INTERVAL""",
             f"{days} days"
         )
-    
+
     @cached(cache_instance=_repo_cache)
     async def count_by_plan(self) -> Dict[str, int]:
         """Статистика по тарифам."""
         rows = await self.db.fetch(
-            """SELECT plan, COUNT(*) as count 
-               FROM users 
+            """SELECT plan, COUNT(*) as count
+               FROM users
                GROUP BY plan"""
         )
         return {r['plan']: r['count'] for r in rows}
-    
+
     @cached(cache_instance=_repo_cache)
     async def get_plan_stats_with_names(self) -> List[Dict]:
         """
         Получить статистику по тарифам с названиями.
-        
+
         Returns:
             Список словарей с полями: plan, plan_name, count
         """
         rows = await self.db.fetch(
-            """SELECT plan, plan_name, COUNT(*) as count 
-               FROM users 
-               GROUP BY plan, plan_name 
+            """SELECT plan, plan_name, COUNT(*) as count
+               FROM users
+               GROUP BY plan, plan_name
                ORDER BY count DESC"""
         )
         return [dict(r) for r in rows]
-    
+
     # ===== Обновление полей =====
-    
+
     async def set_plan(
         self,
         user_id: int,
@@ -149,13 +153,13 @@ class UserRepository:
     ) -> bool:
         """Установить тариф пользователю."""
         result = await self.db.execute(
-            """UPDATE users 
-               SET plan = $1, plan_name = $2, max_links = $3 
+            """UPDATE users
+               SET plan = $1, plan_name = $2, max_links = $3
                WHERE id = $4""",
             plan_key, plan_name, max_links, user_id
         )
         return result == "UPDATE 1"
-    
+
     async def set_discount(self, user_id: int, discount: int) -> bool:
         """Установить скидку WB кошелька."""
         result = await self.db.execute(
@@ -164,7 +168,9 @@ class UserRepository:
         )
         return result == "UPDATE 1"
 
-    async def set_pvz(self, user_id: int, dest: int, address: Optional[str] = None) -> bool:
+    async def set_pvz(
+            self, user_id: int, dest: int, address: Optional[str] = None
+    ) -> bool:
         """Установить пункт выдачи."""
         result = await self.db.execute(
             "UPDATE users SET dest = $1, pvz_address = $2 WHERE id = $3",

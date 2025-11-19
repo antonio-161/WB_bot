@@ -90,8 +90,8 @@ async def get_product_data_async(
                 )
 
                 # Отклоняем данные с challenge
-                if has_challenge:
-                    raise PriceFetchError(f"Challenge received for nm={nm_id}")
+                # if has_challenge:
+                #     raise PriceFetchError(f"Challenge received for nm={nm_id}")
 
                 return products[0]
 

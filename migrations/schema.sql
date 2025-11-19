@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
     discount_percent INT DEFAULT 0,
     max_links INT DEFAULT 5,
     dest BIGINT DEFAULT -1257786,    -- Москва по умолчанию
-    pvz_address TEXT DEFAULT NULL, 
+    pvz_address TEXT DEFAULT NULL,
+    sort_mode TEXT DEFAULT 'savings',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 

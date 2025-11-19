@@ -10,6 +10,7 @@ from utils.decorators import retry_on_error
 
 _repo_cache = SimpleCache(ttl_seconds=120)
 
+
 class PriceHistoryRepository:
     """
     Репозиторий истории цен.
@@ -29,7 +30,7 @@ class PriceHistoryRepository:
     ) -> int:
         """
         Добавить запись в историю.
-        
+
         Returns:
             ID созданной записи
         """
@@ -40,15 +41,17 @@ class PriceHistoryRepository:
             product_id, basic_price, product_price, qty
         )
         return record_id
-    
-    async def get_by_product(self, product_id: int, limit: int = 100) -> List[Dict]:
+
+    async def get_by_product(
+            self, product_id: int, limit: int = 100
+    ) -> List[Dict]:
         """
         Получить историю цен товара.
-        
+
         Args:
             product_id: ID товара
             limit: Максимум записей
-        
+
         Returns:
             Список записей (от новых к старым)
         """
@@ -61,11 +64,11 @@ class PriceHistoryRepository:
             product_id, limit
         )
         return [dict(r) for r in rows]
-    
+
     async def cleanup_old(self, days: int) -> int:
         """
         Удалить записи старше N дней.
-        
+
         Returns:
             Количество удалённых записей
         """
@@ -76,11 +79,11 @@ class PriceHistoryRepository:
         # Извлекаем число из "DELETE 123"
         deleted_count = int(result.split()[-1]) if result != "DELETE 0" else 0
         return deleted_count
-    
+
     async def cleanup_by_plan(self) -> Dict[str, int]:
         """
         Очистить историю согласно тарифам пользователей.
-        
+
         Returns:
             Dict с количеством удалённых записей по тарифам
         """
@@ -91,11 +94,11 @@ class PriceHistoryRepository:
                    SELECT ph2.id FROM price_history ph2
                    JOIN products p ON ph2.product_id = p.id
                    JOIN users u ON p.user_id = u.id
-                   WHERE u.plan = 'plan_free' 
+                   WHERE u.plan = 'plan_free'
                    AND ph2.recorded_at < NOW() - INTERVAL '30 days'
                )"""
         )
-        
+
         # Basic: 90 дней
         result_basic = await self.db.execute(
             """DELETE FROM price_history ph
@@ -103,11 +106,11 @@ class PriceHistoryRepository:
                    SELECT ph2.id FROM price_history ph2
                    JOIN products p ON ph2.product_id = p.id
                    JOIN users u ON p.user_id = u.id
-                   WHERE u.plan = 'plan_basic' 
+                   WHERE u.plan = 'plan_basic'
                    AND ph2.recorded_at < NOW() - INTERVAL '90 days'
                )"""
         )
-        
+
         # Pro: 365 дней
         result_pro = await self.db.execute(
             """DELETE FROM price_history ph
@@ -115,20 +118,20 @@ class PriceHistoryRepository:
                    SELECT ph2.id FROM price_history ph2
                    JOIN products p ON ph2.product_id = p.id
                    JOIN users u ON p.user_id = u.id
-                   WHERE u.plan = 'plan_pro' 
+                   WHERE u.plan = 'plan_pro'
                    AND ph2.recorded_at < NOW() - INTERVAL '365 days'
                )"""
         )
-        
+
         def extract_count(result: str) -> int:
             return int(result.split()[-1]) if result != "DELETE 0" else 0
-        
+
         return {
             "plan_free": extract_count(result_free),
             "plan_basic": extract_count(result_basic),
             "plan_pro": extract_count(result_pro)
         }
-    
+
     @cached(cache_instance=_repo_cache)
     async def count_total(self) -> int:
         """Общее количество записей."""
