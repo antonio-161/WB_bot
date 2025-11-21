@@ -11,7 +11,7 @@ from services.user_service import UserService
 from utils.export_utils import generate_excel, generate_csv
 from utils.decorators import require_plan
 from keyboards.kb import export_format_kb
-from models import ProductRow
+from infrastructure.models import ProductRow
 import logging
 
 router = Router()

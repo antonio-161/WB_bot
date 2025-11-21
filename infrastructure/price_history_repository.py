@@ -4,7 +4,7 @@
 from typing import List, Dict
 
 from utils.cache import cached, SimpleCache
-from services.db import DB
+from infrastructure.db import DB
 from utils.decorators import retry_on_error
 
 
@@ -136,3 +136,36 @@ class PriceHistoryRepository:
     async def count_total(self) -> int:
         """Общее количество записей."""
         return await self.db.fetchval("SELECT COUNT(*) FROM price_history")
+
+    async def get_by_products_batch(
+        self,
+        product_ids: List[int],
+        limit: int = 30
+    ) -> List[Dict]:
+        """
+        Batch-метод: получить историю для нескольких товаров одним запросом.
+
+        Returns:
+            Список всех записей (каждая имеет product_id)
+        """
+        if not product_ids:
+            return []
+
+        # Используем lateral join для получения последних N записей на товар
+        query = """
+            SELECT ph.id, ph.product_id, ph.basic_price, ph.product_price,
+                   ph.qty, ph.recorded_at
+            FROM products p
+            CROSS JOIN LATERAL (
+                SELECT *
+                FROM price_history
+                WHERE product_id = p.id
+                ORDER BY recorded_at DESC
+                LIMIT $2
+            ) ph
+            WHERE p.id = ANY($1)
+            ORDER BY ph.product_id, ph.recorded_at DESC
+        """
+
+        rows = await self.db.fetch(query, product_ids, limit)
+        return [dict(r) for r in rows]

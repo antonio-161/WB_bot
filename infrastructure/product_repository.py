@@ -2,7 +2,7 @@
 Репозиторий для работы с товарами.
 """
 from typing import Optional, Dict, List
-from services.db import DB
+from infrastructure.db import DB
 from utils.cache import cached, SimpleCache
 from utils.decorators import retry_on_error
 

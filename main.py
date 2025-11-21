@@ -9,9 +9,9 @@ from aiogram import Bot, BaseMiddleware, Dispatcher
 from aiogram.types import BotCommand
 
 from config import settings
-from models import ProductRow
+from infrastructure.models import ProductRow
 from services.container import Container
-from services.db import DB
+from infrastructure.db import DB
 from services.price_fetcher import PriceFetcher
 from services.monitor_service import MonitorService
 from services.background_service import BackgroundService
@@ -62,8 +62,10 @@ class DependencyInjectionMiddleware(BaseMiddleware):
         
         # Инжектим бизнес-сервисы
         data["user_service"] = self.container.get_user_service()
-        data["product_service"] = self.container.get_product_service()
         data["settings_service"] = self.container.get_settings_service()
+        data["product_manager"] = self.container.get_product_manager_service()
+        data["price_history_service"] = self.container.get_price_history_service()
+        data["product_analytics"] = self.container.get_product_analytics_service()
         
         # Container для доступа к другим сервисам
         data["container"] = self.container

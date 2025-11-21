@@ -5,7 +5,7 @@
 from typing import Optional, Dict, List
 
 from utils.cache import cached, SimpleCache
-from services.db import DB
+from infrastructure.db import DB
 
 
 _repo_cache = SimpleCache(ttl_seconds=300)

@@ -27,7 +27,7 @@ async def cmd_start(
     
     # ===== НОВЫЙ ПОЛЬЗОВАТЕЛЬ =====
     if not user:
-        await user_service.ensure_user_exists(user_id)
+        await user_service.get_or_create_user(user_id)
         
         await message.answer(
             "🎯 <b>Переплачиваете за покупки на Wildberries?</b>\n\n"

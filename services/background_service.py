@@ -50,11 +50,6 @@ class BackgroundService:
                     f"Pro={deleted['plan_pro']}"
                 )
                 
-                # Удаление просроченных товаров для бесплатного тарифа
-                # (если такая логика нужна)
-                # deleted_products = await self.product_repo.cleanup_expired()
-                # logger.info(f"✅ Удалено {deleted_products} просроченных товаров")
-                
                 logger.info("Очистка завершена")
                 
             except Exception as e:

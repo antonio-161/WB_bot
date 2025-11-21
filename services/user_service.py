@@ -1,13 +1,14 @@
 """
 Сервис для работы с пользователями.
-Содержит бизнес-логику управления пользователями.
+Отвечает за: создание, получение, статистику, проверки лимитов.
+НЕ отвечает за: изменение настроек (это делает SettingsService).
 """
 import logging
 from typing import Dict, Optional
 
-from repositories.user_repository import UserRepository
-from repositories.product_repository import ProductRepository
-from utils.cache import cached, user_cache, settings_cache
+from infrastructure.user_repository import UserRepository
+from infrastructure.product_repository import ProductRepository
+from utils.cache import cached, user_cache
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +16,18 @@ logger = logging.getLogger(__name__)
 def _invalidate_user_cache(user_id: int):
     """Очистить кэш пользователя."""
     user_cache.remove(f"get_user_info:{user_id}")
-    settings_cache.remove(f"get_user_settings:{user_id}")
 
 
 class UserService:
-    """Сервис для работы с пользователями."""
+    """
+    Сервис для работы с пользователями.
+
+    Ответственность:
+    - Создание и получение пользователей
+    - Статистика пользователя
+    - Проверки лимитов (can_add_product)
+    - Управление тарифами
+    """
 
     def __init__(
             self, user_repo: UserRepository, product_repo: ProductRepository
@@ -27,7 +35,9 @@ class UserService:
         self.user_repo = user_repo
         self.product_repo = product_repo
 
-    async def ensure_user_exists(self, user_id: int) -> Dict:
+    # ===== Базовые операции с пользователем =====
+
+    async def get_or_create_user(self, user_id: int) -> Dict:
         """Убедиться что пользователь существует, создать если нет."""
         return await self.user_repo.ensure_exists(user_id)
 
@@ -36,6 +46,8 @@ class UserService:
         """Получить полную информацию о пользователе."""
         return await self.user_repo.get_by_id(user_id)
 
+    # ===== Тарифы =====
+
     async def update_plan(
         self,
         user_id: int,
@@ -43,8 +55,13 @@ class UserService:
         plan_name: str,
         max_links: int
     ) -> bool:
-        """Обновить тарифный план."""
-        await self.ensure_user_exists(user_id)
+        """
+        Обновить тарифный план.
+
+        Returns:
+            True если успешно обновлено
+        """
+        await self.get_or_create_user(user_id)
         success = await self.user_repo.set_plan(
             user_id, plan_key, plan_name, max_links
         )
@@ -54,37 +71,16 @@ class UserService:
 
         return success
 
-    async def update_discount(self, user_id: int, discount: int) -> bool:
-        """Обновить процент скидки WB кошелька."""
-        if not 0 <= discount <= 100:
-            raise ValueError("Скидка должна быть от 0 до 100%")
-
-        await self.ensure_user_exists(user_id)
-        success = await self.user_repo.set_discount(user_id, discount)
-
-        if success:
-            _invalidate_user_cache(user_id)
-
-        return success
-
-    async def update_pvz(
-        self,
-        user_id: int,
-        dest: int,
-        address: Optional[str] = None
-    ) -> bool:
-        """Обновить пункт выдачи."""
-        await self.ensure_user_exists(user_id)
-        success = await self.user_repo.set_pvz(user_id, dest, address)
-
-        if success:
-            _invalidate_user_cache(user_id)
-
-        return success
+    # ===== Статистика =====
 
     @cached(ttl=180, cache_instance=user_cache)
     async def get_user_statistics(self, user_id: int) -> Dict:
-        """Получить статистику пользователя."""
+        """
+        Получить статистику пользователя.
+
+        Returns:
+            Dict со статистикой или {"exists": False}
+        """
         user = await self.user_repo.get_by_id(user_id)
         if not user:
             return {"exists": False}
@@ -109,12 +105,14 @@ class UserService:
             "most_expensive": most_expensive
         }
 
+    # ===== Проверки и лимиты =====
+
     async def can_add_product(self, user_id: int) -> tuple[bool, str]:
         """
         Проверить может ли пользователь добавить товар.
 
         Returns:
-            (bool, str): (можно_добавить, причина_если_нельзя)
+            (можно_добавить, причина_если_нельзя)
         """
         user = await self.user_repo.get_by_id(user_id)
         if not user:

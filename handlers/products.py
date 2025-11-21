@@ -8,8 +8,10 @@ from aiogram.fsm.context import FSMContext
 
 from states.user_states import AddProductState, RenameProductState, SetNotifyState
 from services.container import Container
+from services.product_manager_service import ProductManagerService
+from services.price_history_service import PriceHistoryService
+from services.product_analytics_service import ProductAnalyticsService
 from services.user_service import UserService
-from services.product_service import ProductService
 from services.settings_service import SettingsService
 from utils.wb_utils import extract_nm_id
 from utils.formatters import (
@@ -25,9 +27,9 @@ from keyboards.kb import (
     main_inline_kb, sizes_inline_kb, onboarding_kb,
     products_list_kb, product_detail_kb, confirm_remove_kb,
     back_to_product_kb, notify_mode_kb, remove_products_kb,
-    simple_kb, back_btn
+    simple_kb, back_btn, products_inline
 )
-from models import PriceHistoryRow
+from infrastructure.models import PriceHistoryRow
 import logging
 
 router = Router()
@@ -56,11 +58,11 @@ async def add_product(
     message: Message,
     state: FSMContext,
     user_service: UserService,
-    product_service: ProductService,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    product_manager: ProductManagerService,
+    product_analytics: ProductAnalyticsService
 ):
     """Обработка ввода ссылки/артикула."""
-    # Извлекаем данные
     nm = extract_nm_id(message.text.strip())
     user_id = message.from_user.id
 
@@ -90,11 +92,10 @@ async def add_product(
         dest = settings.get("dest")
         discount = settings.get("discount", 0)
         
-        # Формируем URL
         url = f"https://www.wildberries.ru/catalog/{nm}/detail.aspx"
         
-        # Добавляем товар через сервис
-        success, msg, product_id, product_data = await product_service.add_product(
+        # ✅ ДОБАВЛЯЕМ ТОВАР ЧЕРЕЗ НОВЫЙ СЕРВИС
+        success, msg, product_id = await product_manager.add_product(
             user_id, nm, url, dest
         )
         
@@ -106,8 +107,26 @@ async def add_product(
             await state.clear()
             return
         
+        # Получаем детали для отображения
+        detail = await product_analytics.get_product_detail(product_id, discount)
+        
+        if not detail:
+            await status_msg.edit_text(
+                "❌ Товар добавлен, но ошибка получения данных",
+                reply_markup=main_inline_kb()
+            )
+            await state.clear()
+            return
+        
+        product = detail["product"]
+        
         # Проверяем размеры
-        sizes = product_data.get("sizes", [])
+        # TODO: Получить размеры из ProductData (нужно добавить в return)
+        # Временно: запрашиваем напрямую из PriceFetcher
+        container = Container(...)  # получаем из context
+        raw_data = await container.price_fetcher.get_product_data(nm, dest)
+        
+        sizes = raw_data.get("sizes", []) if raw_data else []
         valid_sizes = [
             s for s in sizes 
             if s.get("name") not in ("", "0", None)
@@ -115,16 +134,16 @@ async def add_product(
         ]
 
         # Если есть размеры — предлагаем выбрать
-        if valid_sizes:
+        if valid_sizes and len(valid_sizes) > 1:
             await state.update_data(
                 url=url,
                 nm=nm,
                 product_id=product_id,
-                product_name=product_data.get("name", f"Товар {nm}")
+                product_name=product.get("name_product", f"Товар {nm}")
             )
 
             await status_msg.edit_text(
-                f"📦 <b>{product_data.get('name')}</b>\n"
+                f"📦 <b>{product.get('name_product')}</b>\n"
                 f"🔢 Артикул: <code>{nm}</code>\n\n"
                 "Выберите размер для отслеживания:",
                 reply_markup=sizes_inline_kb(nm, valid_sizes),
@@ -132,10 +151,8 @@ async def add_product(
             )
             await state.set_state(AddProductState.waiting_for_size)
         else:
-            # Товар без размеров
-            size_data = sizes[0] if sizes else {}
-            price_info = size_data.get("price", {})
-            product_price = price_info.get("product", 0)
+            # Товар без размеров или один размер
+            price = product.get("last_product_price", 0)
             
             # Проверяем онбординг
             data = await state.get_data()
@@ -143,9 +160,9 @@ async def add_product(
 
             # Форматируем и отправляем
             formatted_msg = format_product_added_message(
-                product_data.get("name", f"Товар {nm}"),
+                product.get("name_product", f"Товар {nm}"),
                 nm,
-                product_price,
+                price,
                 discount,
                 is_onboarding
             )
@@ -170,11 +187,10 @@ async def add_product(
 async def select_size_cb(
     query: CallbackQuery,
     state: FSMContext,
-    product_service: ProductService,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    product_manager: ProductManagerService
 ):
     """Выбор размера товара."""
-    # Извлекаем данные
     _, nm_str, size_name = query.data.split(":", 2)
     nm = int(nm_str)
     user_id = query.from_user.id
@@ -192,11 +208,12 @@ async def select_size_cb(
         return
 
     try:
-        # Обновляем размер через сервис
+        # Получаем dest
         settings = await settings_service.get_user_settings(user_id)
         dest = settings.get("dest")
         
-        success, msg = await product_service.update_product_size(
+        # ✅ ОБНОВЛЯЕМ РАЗМЕР ЧЕРЕЗ НОВЫЙ СЕРВИС
+        success, msg = await product_manager.update_product_size(
             product_id,
             size_name,
             nm,
@@ -231,22 +248,22 @@ async def select_size_cb(
 async def cb_list_products(
     query: CallbackQuery,
     user_service: UserService,
-    product_service: ProductService,
-    settings_service: SettingsService
+    settings_service: SettingsService,
+    product_analytics: ProductAnalyticsService
 ):
     """Показать список товаров с аналитикой."""
     user_id = query.from_user.id
 
-    # Получаем настройки через settings_service
+    # Получаем настройки
     settings = await settings_service.get_user_settings(user_id)
     sort_mode = settings.get("sort_mode", "savings")
     discount = settings.get("discount", 0)
     
-    # Получаем данные через сервисы с учётом сортировки
-    products_analytics = await product_service.get_products_with_analytics(
+    # ✅ ПОЛУЧАЕМ ДАННЫЕ ЧЕРЕЗ НОВЫЙ СЕРВИС (1 batch-запрос)
+    products_analytics = await product_analytics.get_products_with_analytics(
         user_id,
-        discount=discount,      # ← Передай discount
-        sort_mode=sort_mode     # ← Передай sort_mode
+        discount=discount,
+        sort_mode=sort_mode
     )
     
     if not products_analytics:
@@ -261,13 +278,11 @@ async def cb_list_products(
         return
     
     user = await user_service.get_user_info(user_id)
-    settings = await settings_service.get_user_settings(user_id)
     
-    discount = settings.get("discount", 0)
     plan = user.get("plan", "plan_free")
     max_links = user.get("max_links", 5)
     
-    # Подсчёт аналитики
+    # Подсчёт общей аналитики
     total_current_price = sum(
         p["product"].get("last_product_price", 0)
         for p in products_analytics
@@ -278,14 +293,13 @@ async def cb_list_products(
         for p in products_analytics
     )
     
+    # Лучшая сделка
     best_deal = None
     best_deal_percent = 0
     for item in products_analytics:
         if item["savings_percent"] > best_deal_percent:
             best_deal_percent = item["savings_percent"]
             best_deal = item["product"]
-    
-    sort_mode = settings.get("sort_mode", "savings")
 
     # Форматируем сообщение
     formatted_msg = format_products_list(
@@ -420,23 +434,22 @@ async def cb_products_page(
 
     await query.answer()
 
-
-
 # ============= ФИЛЬТРЫ =============
+
 
 @router.callback_query(F.data == "filter_best_deals")
 @require_plan(['plan_basic', 'plan_pro'], "⛔ Фильтры доступны только на платных тарифах")
 async def filter_best_deals(
     query: CallbackQuery,
-    product_service: ProductService,
     settings_service: SettingsService,
+    product_analytics: ProductAnalyticsService,
     user_service: UserService
 ):
     """Показать товары с лучшими скидками."""
     user_id = query.from_user.id
     
-    # Получаем отфильтрованные товары через сервис
-    filtered = await product_service.filter_best_deals(user_id, min_savings_percent=15.0)
+    # ✅ ПОЛУЧАЕМ ОТФИЛЬТРОВАННЫЕ ТОВАРЫ (1 batch-запрос)
+    filtered = await product_analytics.filter_best_deals(user_id, min_savings_percent=15.0)
     
     if not filtered:
         await query.answer(
@@ -463,7 +476,6 @@ async def filter_best_deals(
         for p in filtered
     ]
     
-    from keyboards.kb import products_inline
     await query.message.edit_text(
         formatted_msg,
         parse_mode="HTML",
@@ -680,22 +692,17 @@ async def cb_rename_start(
 async def process_rename(
     message: Message,
     state: FSMContext,
-    product_service: ProductService
+    product_manager: ProductManagerService,
+    container: Container
 ):
     """Обработка нового названия."""
-    # if message.text == "/cancel":
-    #     await message.answer("❌ Переименование отменено", reply_markup=main_inline_kb())
-    #     await state.clear()
-    #     return
-    
-    # Извлекаем данные
     new_name = message.text.strip()
     data = await state.get_data()
     product_id = data.get("product_id")
     nm_id = data.get("nm_id")
     
-    # Переименовываем через сервис
-    success, msg = await product_service.rename_product(product_id, new_name)
+    # ✅ ПЕРЕИМЕНОВЫВАЕМ ЧЕРЕЗ НОВЫЙ СЕРВИС
+    success, msg = await product_manager.rename_product(product_id, new_name)
     
     if not success:
         await message.answer(f"❌ {msg}")

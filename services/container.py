@@ -3,15 +3,17 @@
 """
 from typing import Optional
 
-from services.db import DB
+from infrastructure.db import DB
 from services.price_fetcher import PriceFetcher
-from repositories.user_repository import UserRepository
-from repositories.product_repository import ProductRepository
-from repositories.price_history_repository import PriceHistoryRepository
+from infrastructure.user_repository import UserRepository
+from infrastructure.product_repository import ProductRepository
+from infrastructure.price_history_repository import PriceHistoryRepository
 
 # Импорты сервисов
 from services.user_service import UserService
-from services.product_service import ProductService
+from services.product_analytics_service import ProductAnalyticsService
+from services.product_manager_service import ProductManagerService
+from services.price_history_service import PriceHistoryService
 from services.settings_service import SettingsService
 
 
@@ -29,8 +31,10 @@ class Container:
 
         # Бизнес-сервисы
         self._user_service: Optional[UserService] = None
-        self._product_service: Optional[ProductService] = None
         self._settings_service: Optional[SettingsService] = None
+        self._product_manager_service: Optional[ProductManagerService] = None
+        self._price_history_service: Optional[PriceHistoryService] = None
+        self._product_analytics_service: Optional[ProductAnalyticsService] = None
 
     # ===== Репозитории =====
 
@@ -60,16 +64,6 @@ class Container:
             )
         return self._user_service
 
-    def get_product_service(self) -> ProductService:
-        """Получить сервис товаров."""
-        if self._product_service is None:
-            self._product_service = ProductService(
-                self.get_product_repo(),
-                self.get_price_history_repo(),
-                self.price_fetcher
-            )
-        return self._product_service
-
     def get_settings_service(self) -> SettingsService:
         """Получить сервис настроек."""
         if self._settings_service is None:
@@ -77,3 +71,30 @@ class Container:
                 self.get_user_repo()
             )
         return self._settings_service
+
+    def get_product_manager_service(self) -> ProductManagerService:
+        """Получить сервис управления товарами."""
+        if self._product_manager_service is None:
+            self._product_manager_service = ProductManagerService(
+                self.get_product_repo(),
+                self.get_price_history_repo(),
+                self.price_fetcher
+            )
+        return self._product_manager_service
+
+    def get_price_history_service(self) -> PriceHistoryService:
+        """Получить сервис истории цен."""
+        if self._price_history_service is None:
+            self._price_history_service = PriceHistoryService(
+                self.get_price_history_repo()
+            )
+        return self._price_history_service
+
+    def get_product_analytics_service(self) -> ProductAnalyticsService:
+        """Получить сервис аналитики товаров."""
+        if self._product_analytics_service is None:
+            self._product_analytics_service = ProductAnalyticsService(
+                self.get_product_repo(),
+                self.get_price_history_service()
+            )
+        return self._product_analytics_service

@@ -6,7 +6,7 @@ matplotlib.use('Agg')  # Без GUI
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-from models import PriceHistoryRow
+from infrastructure.models import PriceHistoryRow
 from utils.wb_utils import apply_wallet_discount
 
 # Настройка для корректного отображения русского текста

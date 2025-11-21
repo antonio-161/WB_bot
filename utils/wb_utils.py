@@ -1,7 +1,7 @@
 """Утилиты для Wildberries — извлечение nm_id из ссылки и расчёты."""
 import re
 from typing import Optional
-from services.db import DB
+from infrastructure.db import DB
 
 
 def extract_nm_id(text: str) -> Optional[int]:

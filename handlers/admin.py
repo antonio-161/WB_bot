@@ -13,8 +13,8 @@ from keyboards.kb import (
     admin_menu_kb, back_to_admin_menu_kb, user_management_kb, 
     plan_selection_kb
 )
-from repositories.user_repository import UserRepository
-from repositories.product_repository import ProductRepository
+from infrastructure.user_repository import UserRepository
+from infrastructure.product_repository import ProductRepository
 from config import settings
 from utils.error_tracker import get_error_tracker
 from utils.health_monitor import get_health_monitor

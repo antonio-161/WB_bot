@@ -4,7 +4,7 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
-from services.db import DB
+from infrastructure.db import DB
 from states.user_states import AddProductState
 from keyboards.kb import choose_plan_kb, show_plans_kb, upsell_kb
 

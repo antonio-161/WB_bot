@@ -3,7 +3,7 @@ import io
 from typing import List
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
-from models import ProductRow
+from infrastructure.models import ProductRow
 import csv
 
 
