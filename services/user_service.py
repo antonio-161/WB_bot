@@ -6,6 +6,9 @@
 import logging
 from typing import Dict, Optional
 
+from core.entities import User
+from core.enums import Plan
+from core.views import UserView
 from infrastructure.user_repository import UserRepository
 from infrastructure.product_repository import ProductRepository
 from utils.cache import cached, user_cache
@@ -37,22 +40,28 @@ class UserService:
 
     # ===== Базовые операции с пользователем =====
 
-    async def get_or_create_user(self, user_id: int) -> Dict:
+    async def get_or_create_user(self, user_id: int) -> UserView:
         """Убедиться что пользователь существует, создать если нет."""
-        return await self.user_repo.ensure_exists(user_id)
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            user = User(id=user_id)
+            user = await self.user_repo.create(user_id)
+        return UserView.from_entity(user)
 
     @cached(ttl=600, cache_instance=user_cache)
-    async def get_user_info(self, user_id: int) -> Optional[Dict]:
+    async def get_user_info(self, user_id: int) -> Optional[UserView]:
         """Получить полную информацию о пользователе."""
-        return await self.user_repo.get_by_id(user_id)
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            return None
+        return UserView.from_entity(user)
 
     # ===== Тарифы =====
 
     async def update_plan(
         self,
         user_id: int,
-        plan_key: str,
-        plan_name: str,
+        plan: Plan,
         max_links: int
     ) -> bool:
         """
@@ -61,9 +70,8 @@ class UserService:
         Returns:
             True если успешно обновлено
         """
-        await self.get_or_create_user(user_id)
-        success = await self.user_repo.set_plan(
-            user_id, plan_key, plan_name, max_links
+        success = await self.user_repo.update_plan(
+            user_id, plan, max_links
         )
 
         if success:
@@ -81,7 +89,7 @@ class UserService:
         Returns:
             Dict со статистикой или {"exists": False}
         """
-        user = await self.user_repo.get_by_id(user_id)
+        user = await self.get_user_info(user_id)
         if not user:
             return {"exists": False}
 
@@ -96,11 +104,10 @@ class UserService:
 
         return {
             "exists": True,
-            "user": user,
             "total_products": total_products,
             "in_stock": in_stock,
             "out_of_stock": out_of_stock,
-            "avg_price": avg_price,
+            "avg_price": avg_price or 0,
             "cheapest": cheapest,
             "most_expensive": most_expensive
         }
@@ -110,18 +117,10 @@ class UserService:
     async def can_add_product(self, user_id: int) -> tuple[bool, str]:
         """
         Проверить может ли пользователь добавить товар.
-
-        Returns:
-            (можно_добавить, причина_если_нельзя)
         """
         user = await self.user_repo.get_by_id(user_id)
         if not user:
             return False, "Пользователь не найден"
 
-        max_links = user.get('max_links', 5)
-        products_count = await self.product_repo.count_by_user(user_id)
-
-        if products_count >= max_links:
-            return False, f"Достигнут лимит ({max_links}) товаров"
-
-        return True, ""
+        current_count = await self.product_repo.count_by_user(user_id)
+        return user.can_add_product(current_count)

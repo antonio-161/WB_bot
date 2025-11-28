@@ -267,7 +267,7 @@ class MonitorService:
                 price_data['product_price'] = product['last_product_price']
                 price_data['basic_price'] = product.get('last_basic_price', price_data['basic_price'])
         
-        await self.product_repo.update_prices(
+        await self.product_repo.update_prices_and_stock(
             product_id,
             price_data['basic_price'],
             price_data['product_price'],

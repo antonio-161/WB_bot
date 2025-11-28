@@ -5,6 +5,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
+from constants import DEFAULT_DEST
 from states.user_states import SetPVZState
 from services.settings_service import SettingsService
 from services.user_service import UserService
@@ -169,7 +170,6 @@ async def cb_show_pvz(
         return
 
     if pvz_info.get("is_default"):
-        from constants import DEFAULT_DEST
         text = (
             f"📍 <b>Пункт выдачи не установлен</b>\n\n"
             f"По умолчанию используется: <b>Москва</b>\n"
@@ -206,8 +206,6 @@ async def cb_reset_pvz(
     if not success:
         await query.answer(f"❌ {msg}", show_alert=True)
         return
-    
-    from constants import DEFAULT_DEST
     
     await query.message.edit_text(
         f"✅ <b>ПВЗ сброшен</b>\n\n"

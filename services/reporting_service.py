@@ -32,13 +32,13 @@ class ReportingService:
         """
         for key in self.hourly_metrics:
             self.hourly_metrics[key] += cycle_metrics.get(key, 0)
-        
+
         self.cycles_count += 1
-    
+
     def should_send_report(self) -> bool:
         """Проверить нужно ли отправлять отчёт."""
         return self.cycles_count >= self.report_every
-    
+
     async def send_hourly_report(self):
         """Отправить почасовой отчёт администратору."""
         report = (
@@ -48,7 +48,7 @@ class ReportingService:
             f"🔔 Уведомлений отправлено: {self.hourly_metrics['notifications']}\n\n"
             f"⏰ Интервал проверки: {self.poll_interval} сек"
         )
-        
+
         try:
             await self.bot.send_message(
                 settings.ADMIN_CHAT_ID,
@@ -56,25 +56,25 @@ class ReportingService:
                 parse_mode="HTML"
             )
             logger.info("Отчёт отправлен администратору")
-            
+
         except Exception as e:
             logger.error(f"Не удалось отправить отчёт админу: {e}")
-        
+
         # Сбрасываем метрики
         self.reset_metrics()
-    
+
     def reset_metrics(self):
         """Сбросить накопленные метрики."""
         self.hourly_metrics = {"processed": 0, "errors": 0, "notifications": 0}
         self.cycles_count = 0
-    
+
     def format_cycle_log(self, metrics: Dict[str, int]) -> str:
         """
         Форматировать лог сообщение для цикла.
-        
+
         Args:
             metrics: Метрики цикла
-        
+
         Returns:
             Строка для логирования
         """

@@ -1,18 +1,18 @@
+"""
+DTO (Data Transfer Objects) -
+чистые структуры данных для передачи между слоями.
+Используются ТОЛЬКО в infrastructure слое для маппинга из/в БД.
+"""
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-# ==============================
-# DTO — Data Transfer Objects
-# Используются ИСКЛЮЧИТЕЛЬНО для слоя Infrastructure
-# ==============================
-
 
 @dataclass
 class UserDTO:
+    """DTO для пользователя - только данные из БД."""
     id: int
     plan: str
-    plan_name: str
     discount_percent: int
     max_links: int
     dest: int
@@ -23,6 +23,7 @@ class UserDTO:
 
 @dataclass
 class ProductDTO:
+    """DTO для товара - только данные из БД."""
     id: int
     user_id: int
     url_product: str
@@ -42,6 +43,7 @@ class ProductDTO:
 
 @dataclass
 class PriceHistoryDTO:
+    """DTO для истории цен - только данные из БД."""
     id: int
     product_id: int
     basic_price: int

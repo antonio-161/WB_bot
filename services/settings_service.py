@@ -3,11 +3,14 @@
 Отвечает за: валидацию, форматирование, сложную бизнес-логику настроек.
 """
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
+
+from core.enums import SortMode
+from core.entities import User
 from infrastructure.user_repository import UserRepository
 from services.pvz_finder import get_dest_by_address
 from constants import DEFAULT_DEST
-from utils.cache import cached, settings_cache
+from utils.cache import settings_cache
 
 logger = logging.getLogger(__name__)
 
@@ -32,81 +35,13 @@ class SettingsService:
     def __init__(self, user_repo: UserRepository):
         self.user_repo = user_repo
 
-    # ===== Получение настроек =====
-
-    @cached(ttl=600, cache_instance=settings_cache)
-    async def get_user_settings(self, user_id: int) -> Dict:
-        """
-        Получить все настройки пользователя с форматированием.
-
-        Returns:
-            Dict с настройками или {"exists": False}
-        """
-        user = await self.user_repo.get_by_id(user_id)
-
-        if not user:
-            return {"exists": False}
-
-        discount = user.get("discount_percent", 0)
-        plan_name = user.get("plan_name", "Не установлен")
-        max_links = user.get("max_links", 5)
-        dest = user.get("dest", DEFAULT_DEST)
-        pvz_address = user.get("pvz_address")
-        sort_mode = user.get("sort_mode", "savings")
-
-        # Форматируем информацию о ПВЗ
-        if dest == DEFAULT_DEST or not dest:
-            pvz_info = "Москва (по умолчанию)"
-        elif pvz_address:
-            pvz_info = pvz_address
-        else:
-            pvz_info = f"Код: {dest}"
-
-        return {
-            "exists": True,
-            "discount": discount,
-            "plan_name": plan_name,
-            "max_links": max_links,
-            "dest": dest,
-            "pvz_address": pvz_address,
-            "pvz_info": pvz_info,
-            "sort_mode": sort_mode
-        }
-
-    @cached(ttl=600, cache_instance=settings_cache)
-    async def get_pvz_info(self, user_id: int) -> Dict:
-        """
-        Получить информацию о текущем ПВЗ.
-
-        Returns:
-            Dict с информацией о ПВЗ
-        """
-        user = await self.user_repo.get_by_id(user_id)
-
-        if not user:
-            return {"exists": False}
-
-        dest = user.get("dest", DEFAULT_DEST)
-        pvz_address = user.get("pvz_address")
-
-        is_default = dest == DEFAULT_DEST or not dest
-
-        return {
-            "exists": True,
-            "dest": dest,
-            "address": pvz_address,
-            "is_default": is_default
-        }
-
-    # ===== Изменение настроек =====
-
     async def update_discount(
         self,
         user_id: int,
         discount: int
     ) -> Tuple[bool, str]:
         """
-        Обновить скидку WB кошелька с валидацией.
+        Обновить скидку WB кошелька.
 
         Args:
             user_id: ID пользователя
@@ -115,21 +50,17 @@ class SettingsService:
         Returns:
             (success, message)
         """
-        # Валидация
-        if not isinstance(discount, int):
-            return False, "Скидка должна быть целым числом"
+        user: User = await self.user_repo.get_by_id(user_id)
+        if not user:
+            return False, "Пользователь не найден"
 
-        if not 0 <= discount <= 100:
-            return False, "Скидка должна быть от 0 до 100%"
+        ok, message = user.validate_discount(discount)
+        if not ok:
+            return False, message
 
-        # Сохраняем через репозиторий
-        success = await self.user_repo.set_discount(user_id, discount)
+        await self.user_repo.update_discount(user_id, discount)
 
-        if success:
-            _invalidate_settings_cache(user_id)
-            return True, f"Скидка установлена: {discount}%"
-        else:
-            return False, "Ошибка при сохранении скидки"
+        return True, f"Ваша скидка обновлена: {discount}%"
 
     async def update_pvz_by_address(
         self,
@@ -165,7 +96,7 @@ class SettingsService:
             )
 
         # Сохраняем в БД
-        success = await self.user_repo.set_pvz(user_id, dest, address)
+        success = await self.user_repo.update_pvz(user_id, dest, address)
 
         if success:
             _invalidate_settings_cache(user_id)
@@ -181,36 +112,31 @@ class SettingsService:
         Returns:
             (success, message)
         """
-        success = await self.user_repo.set_pvz(user_id, DEFAULT_DEST, None)
+        success = await self.user_repo.update_pvz(user_id, DEFAULT_DEST, None)
 
         if success:
             _invalidate_settings_cache(user_id)
-            return True, "ПВЗ сброшен на Москву"
+            return True, "ПВЗ сброшен. Установлен регион по умолчанию: Москва"
         else:
             return False, "Ошибка при сбросе ПВЗ"
 
     async def update_sort_mode(
             self, user_id: int, mode: str
     ) -> Tuple[bool, str]:
-        """
-        Обновить режим сортировки товаров.
+        """Установить режим сортировки: updated / savings."""
 
-        Args:
-            mode: "savings" (по выгодности) или "date" (по дате)
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            return False, "Пользователь не найден"
 
-        Returns:
-            (success, message)
-        """
-        # Валидация
-        if mode not in ["savings", "date"]:
-            return False, "Неверный режим сортировки. Допустимые: savings, date"
+        try:
+            sort_enum = SortMode(mode)
+        except ValueError:
+            return False, "Неверный режим сортировки"
 
-        # Сохраняем
-        success = await self.user_repo.set_sort_mode(user_id, mode)
+        await self.user_repo.update_sort_mode(user_id, sort_enum.value)
 
-        if success:
-            _invalidate_settings_cache(user_id)
-            mode_name = "по выгодности" if mode == "savings" else "по дате добавления"
-            return True, f"Режим сортировки изменён: {mode_name}"
+        if sort_enum == SortMode.SAVINGS:
+            return True, "Сортировка изменена: по экономии"
         else:
-            return False, "Ошибка при сохранении режима сортировки"
+            return True, "Сортировка изменена: по дате обновления"

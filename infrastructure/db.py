@@ -30,7 +30,9 @@ class DB:
         rows = await db.fetch("SELECT * FROM users WHERE id = $1", user_id)
 
         # INSERT/UPDATE/DELETE
-        await db.execute("UPDATE users SET plan = $1 WHERE id = $2", "plan_pro", user_id)
+        await db.execute(
+            "UPDATE users SET plan = $1 WHERE id = $2", "plan_pro", user_id
+        )
 
         # Транзакция
         async with db.pool.acquire() as conn:
@@ -229,40 +231,6 @@ class DB:
         """
         async with self.pool.acquire() as conn:
             await conn.executemany(query, args_list)
-
-    # ===== Утилиты =====
-
-    def dict_from_row(self, row: Optional[asyncpg.Record]) -> Optional[Dict]:
-        """
-        Конвертировать asyncpg.Record в dict.
-
-        Args:
-            row: Запись из БД
-
-        Returns:
-            Dict или None
-
-        Example:
-            row = await db.fetchrow("SELECT * FROM users WHERE id = $1", 123)
-            user_dict = db.dict_from_row(row)
-        """
-        return dict(row) if row else None
-
-    def dicts_from_rows(self, rows: List[asyncpg.Record]) -> List[Dict]:
-        """
-        Конвертировать список asyncpg.Record в список dict.
-
-        Args:
-            rows: Список записей
-
-        Returns:
-            Список dict
-
-        Example:
-            rows = await db.fetch("SELECT * FROM users")
-            users = db.dicts_from_rows(rows)
-        """
-        return [dict(row) for row in rows]
 
     # ===== Health check =====
 

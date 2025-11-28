@@ -92,7 +92,6 @@ async def show_stats(
         
         # Товары
         total_products = await product_repo.count_total()
-        products_today = await product_repo.count_recent(1)
         
         # Тарифы
         plans_stats = await user_repo.get_plan_stats_with_names()
@@ -482,20 +481,11 @@ async def show_products_stats(query: CallbackQuery, product_repo: ProductReposit
         total = await product_repo.count_total()
         out_of_stock = await product_repo.count_out_of_stock_total()
         
-        # Топ товаров
-        top_products = await product_repo.get_top_tracked(5)
-        
         text = (
             "📦 <b>Статистика товаров</b>\n\n"
             f"Всего товаров в мониторинге: {total}\n"
             f"Нет в наличии: {out_of_stock}\n\n"
         )
-        
-        if top_products:
-            text += "<b>Топ-5 популярных товаров:</b>\n"
-            for i, product in enumerate(top_products, 1):
-                name = product['name_product'][:30] + "..." if len(product['name_product']) > 30 else product['name_product']
-                text += f"{i}. {name} ({product['trackers']} 👥)\n"
         
         await query.message.edit_text(
             text,
